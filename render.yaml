@@ -1,0 +1,29 @@
+# CargoSync full-stack test deployment on Render.
+# Existing database cargosync-db was provisioned in the same workspace.
+services:
+  - type: web
+    name: cargosync-dispatch
+    runtime: python
+    region: frankfurt
+    plan: free
+    branch: cargosync-fullstack-deploy
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT --proxy-headers
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cargosync-db
+          property: connectionString
+      - key: CARGOSYNC_SECURE_COOKIES
+        value: "1"
+      - key: CARGOSYNC_SESSION_DAYS
+        value: "7"
+      - key: CARGOSYNC_DATA_DIR
+        value: /tmp/cargosync
+      - key: CARGOSYNC_BOOTSTRAP_ADMIN_NAME
+        value: Workspace Admin
+      - key: CARGOSYNC_BOOTSTRAP_ADMIN_USERNAME
+        value: admin
+      - key: CARGOSYNC_BOOTSTRAP_ADMIN_PASSWORD
+        sync: false

@@ -1,0 +1,5 @@
+# Replace CARGOSYNC_DOMAIN in .env with a real domain whose DNS points to this server.
+{$CARGOSYNC_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy cargosync:8000
+}
