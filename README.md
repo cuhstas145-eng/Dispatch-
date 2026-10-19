@@ -1,6 +1,6 @@
 # CargoSync Dispatch Workspace — серверная версия
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https%3A%2F%2Fgithub.com%2Fcuhstas145-eng%2FDispatch-&branch=cargosync-fullstack-deploy)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/cuhstas145-eng/Dispatch-/tree/cargosync-fullstack-deploy)
 
 Для облачного развёртывания откройте кнопку выше, выберите ветку `cargosync-fullstack-deploy` и задайте `CARGOSYNC_BOOTSTRAP_ADMIN_PASSWORD` в форме Render. Это временный пароль; после первого входа система потребует его заменить. Не публикуйте пароль в GitHub или мессенджере команды.
 
