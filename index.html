@@ -1,0 +1,397 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#101827">
+  <title>Reefer Dispatch AI</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: var(--tg-theme-bg-color, #101827);
+      --panel: var(--tg-theme-secondary-bg-color, #182438);
+      --text: var(--tg-theme-text-color, #f2f6ff);
+      --muted: var(--tg-theme-hint-color, #9eacc1);
+      --accent: var(--tg-theme-button-color, #4e8cff);
+      --line: rgba(150, 175, 210, .15);
+      --green: #56d6a0;
+      --orange: #ffbd67;
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0 0 84px;
+      background:
+        radial-gradient(ellipse at 95% 0%, rgba(64,111,193,.17), transparent 38%),
+        var(--bg);
+      color: var(--text);
+      font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .wrap { max-width: 620px; margin: auto; padding: 20px 16px; }
+    .top { display:flex; align-items:center; gap:12px; margin: 5px 0 22px; }
+    .logo {
+      width:50px; height:50px; border-radius:16px;
+      background:linear-gradient(145deg,#4b91ff,#2456ba);
+      display:grid; place-items:center; font-size:25px;
+      box-shadow:0 9px 25px rgba(43,103,217,.25);
+    }
+    h1 { font-size:20px; margin:0; letter-spacing:-.4px; }
+    .sub { color:var(--muted); font-size:12px; margin-top:3px; }
+    h2 { font-size:21px; margin: 8px 0 5px; letter-spacing:-.4px; }
+    p { margin:5px 0 16px; color:var(--muted); }
+    .eyebrow { color:#86b6ff; font-size:11px; font-weight:800; letter-spacing:1.4px; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
+    .tile, .card {
+      border:1px solid var(--line); border-radius:var(--radius);
+      background:var(--panel);
+    }
+    .tile {
+      text-align:left; min-height:138px; padding:16px 14px; color:var(--text);
+      font:inherit; cursor:pointer;
+      transition:transform .12s ease, border-color .12s ease;
+    }
+    .tile:active { transform:scale(.98); }
+    .tile-icon { font-size:25px; margin-bottom:16px; }
+    .tile b { display:block; font-size:14px; margin-bottom:4px; }
+    .tile span { color:var(--muted); font-size:12px; }
+    .card { padding:17px; margin-top:12px; }
+    .field { display:block; margin-top:13px; }
+    .field span {
+      display:block; color:var(--muted); font-size:12px;
+      margin-bottom:7px; font-weight:600;
+    }
+    input, textarea {
+      display:block; width:100%; border:1px solid var(--line);
+      border-radius:12px; background:var(--bg); color:var(--text);
+      font:inherit; padding:13px 12px; outline:none;
+    }
+    input:focus, textarea:focus { border-color:var(--accent); }
+    textarea { min-height:110px; resize:vertical; }
+    .btn {
+      border:0; border-radius:12px; padding:13px 15px; width:100%;
+      margin-top:14px; background:var(--accent); color:white;
+      font:inherit; font-weight:750; cursor:pointer;
+    }
+    .btn.secondary {
+      background:transparent; color:var(--text); border:1px solid var(--line);
+    }
+    .btn:active { opacity:.82; }
+    .result {
+      margin-top:15px; background:rgba(75,145,255,.10);
+      border:1px solid rgba(75,145,255,.28); border-radius:15px;
+      padding:15px; display:none;
+    }
+    .result-label { color:var(--muted); font-size:12px; }
+    .big { font-size:32px; font-weight:850; letter-spacing:-1px; margin:5px 0; }
+    .stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+    .stat { background:var(--bg); border:1px solid var(--line); border-radius:12px; padding:12px; }
+    .stat span { display:block; color:var(--muted); font-size:11px; }
+    .stat b { display:block; font-size:17px; margin-top:4px; overflow-wrap:anywhere; }
+    .back {
+      border:0; padding:7px 0; margin:0 0 8px; background:transparent;
+      color:var(--muted); font:inherit; cursor:pointer;
+    }
+    .hidden { display:none !important; }
+    .nav {
+      position:fixed; z-index:10; bottom:0; left:0; right:0;
+      padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+      background:var(--bg); border-top:1px solid var(--line);
+      display:flex; justify-content:center; gap:8px;
+    }
+    .nav button {
+      background:transparent; border:0; color:var(--muted);
+      font:inherit; font-size:12px; padding:8px 10px; border-radius:11px;
+    }
+    .nav button.active { background:var(--panel); color:var(--text); }
+    .checkrow {
+      display:flex; align-items:flex-start; gap:10px;
+      padding:12px 0; border-bottom:1px solid var(--line);
+    }
+    .checkrow input { width:19px; height:19px; margin:2px 0 0; accent-color:var(--green); flex-shrink:0; }
+    .checkrow label { flex:1; }
+    .checkrow small { display:block; color:var(--muted); margin-top:3px; }
+    .progress { height:6px; background:var(--bg); border-radius:10px; overflow:hidden; margin:12px 0; }
+    .progress div { height:100%; width:0; background:var(--green); transition:width .15s ease; }
+    .hint { color:var(--muted); font-size:12px; margin-top:12px; }
+    .toast { position:fixed; z-index:20; bottom:82px; left:16px; right:16px; padding:12px; text-align:center; border-radius:12px; background:var(--panel); border:1px solid var(--line); display:none; }
+    .view { animation:appear .15s ease; }
+    @keyframes appear { from { opacity:.6; transform:translateY(3px); } to { opacity:1; transform:none; } }
+    @media(min-width:520px) { .tile { min-height:155px; padding:20px; } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="logo">🚛</div>
+    <div>
+      <h1>Reefer Dispatch AI</h1>
+      <div class="sub">Dispatch tools · all-in-one</div>
+    </div>
+  </header>
+
+  <section id="home" class="view">
+    <div class="eyebrow">DISPATCH DESK</div>
+    <h2>What are we working on?</h2>
+    <p>Choose a tool to get started.</p>
+    <div class="grid">
+      <button class="tile" onclick="show('route')">
+        <div class="tile-icon">🗺️</div>
+        <b>Load Route</b><span>Route, miles & local ETA</span>
+      </button>
+      <button class="tile" onclick="show('rpm')">
+        <div class="tile-icon">⚡</div>
+        <b>Quick RPM</b><span>Rate divided by miles</span>
+      </button>
+      <button class="tile" onclick="show('counter')">
+        <div class="tile-icon">💬</div>
+        <b>Counteroffer</b><span>Prepare a broker message</span>
+      </button>
+      <button class="tile" onclick="show('checklist')">
+        <div class="tile-icon">❄️</div>
+        <b>Reefer Checklist</b><span>Track dispatch checks</span>
+      </button>
+    </div>
+    <div class="card">
+      <div class="eyebrow">QUICK FORMULA</div>
+      <div style="font-size:16px;font-weight:750;margin-top:6px">RPM = Rate ÷ Total Miles</div>
+      <div class="hint">Gross revenue per mile. Expenses are not deducted. No target RPM.</div>
+    </div>
+  </section>
+
+  <section id="rpm" class="view hidden">
+    <button class="back" onclick="show('home')">← Dashboard</button>
+    <div class="eyebrow">QUICK CALCULATOR</div><h2>Quick RPM</h2>
+    <p>Enter the rate and all miles, including deadhead.</p>
+    <div class="card">
+      <label class="field"><span>Load rate (USD)</span><input id="rpmRate" type="number" min="0.01" step="0.01" placeholder="2500"></label>
+      <label class="field"><span>Total miles</span><input id="rpmMiles" type="number" min="0.1" step="0.1" placeholder="1000"></label>
+      <button class="btn" onclick="calcRPM()">Calculate RPM</button>
+      <div id="rpmResult" class="result">
+        <div class="result-label">ALL-IN RPM</div><div id="rpmBig" class="big">$2.50/mi</div>
+        <div class="stats">
+          <div class="stat"><span>Load rate</span><b id="rpmRateOut">$2,500</b></div>
+          <div class="stat"><span>Total miles</span><b id="rpmMilesOut">1,000 mi</b></div>
+        </div>
+        <div class="hint">Revenue per mile before expenses.</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">LOAD ANALYZER</div>
+      <h2 style="font-size:18px">Loaded + Deadhead</h2>
+      <label class="field"><span>Load rate (USD)</span><input id="anRate" type="number" min="0.01" step=".01" placeholder="2500"></label>
+      <label class="field"><span>Loaded miles</span><input id="anLoaded" type="number" min=".1" step=".1" placeholder="900"></label>
+      <label class="field"><span>Deadhead miles</span><input id="anDead" type="number" min="0" step=".1" placeholder="100"></label>
+      <button class="btn secondary" onclick="analyze()">Analyze load</button>
+      <div id="anResult" class="result">
+        <div class="result-label">ALL-IN RPM</div><div id="anBig" class="big"></div>
+        <div class="stats">
+          <div class="stat"><span>Total miles</span><b id="anTotal"></b></div>
+          <div class="stat"><span>Loaded RPM</span><b id="anLoadedRPM"></b></div>
+          <div class="stat"><span>Deadhead share</span><b id="anPct"></b></div>
+          <div class="stat"><span>Deadhead status</span><b id="anVerdict"></b></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="route" class="view hidden">
+    <button class="back" onclick="show('home')">← Dashboard</button>
+    <div class="eyebrow">ROUTE ESTIMATE</div><h2>Calculate a load</h2>
+    <p>Enter US locations. The bot calculates route miles and estimated local ETAs.</p>
+    <div class="card">
+      <label class="field"><span>Truck current location</span><input id="truck" autocomplete="street-address" placeholder="Chicago, IL"></label>
+      <label class="field"><span>Pickup</span><input id="pickup" placeholder="Columbus, OH"></label>
+      <label class="field"><span>Delivery</span><input id="delivery" placeholder="Atlanta, GA"></label>
+      <label class="field"><span>Load rate (USD)</span><input id="routeRate" type="number" min=".01" step=".01" placeholder="3200"></label>
+      <button class="btn" onclick="submitRoute()">Calculate route in bot</button>
+      <div class="hint">The bot will process the route and return the estimate in this chat. Routing is not truck-specific; verify restrictions and HOS.</div>
+    </div>
+  </section>
+
+  <section id="counter" class="view hidden">
+    <button class="back" onclick="show('home')">← Dashboard</button>
+    <div class="eyebrow">BROKER COMMUNICATION</div><h2>Counteroffer</h2>
+    <p>Create a respectful counteroffer message.</p>
+    <div class="card">
+      <label class="field"><span>Current offer (USD)</span><input id="offer" type="number" min=".01" step=".01" placeholder="2200"></label>
+      <label class="field"><span>Requested rate (USD)</span><input id="ask" type="number" min=".01" step=".01" placeholder="2450"></label>
+      <label class="field"><span>Reason</span><input id="reason" placeholder="Deadhead miles and operating costs"></label>
+      <button class="btn" onclick="makeCounter()">Create draft</button>
+      <div id="counterResult" class="result">
+        <label class="field"><span>Message preview</span><textarea id="counterText" readonly></textarea></label>
+        <button class="btn secondary" onclick="copyCounter()">Copy message</button>
+        <button class="btn" onclick="sendCounter()">Send to bot chat</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="checklist" class="view hidden">
+    <button class="back" onclick="show('home')">← Dashboard</button>
+    <div class="eyebrow">PRE-DISPATCH</div><h2>Reefer checklist</h2>
+    <p>Tick off the checks as you complete them.</p>
+    <div class="card">
+      <div id="checkCount" class="result-label">0 of 10 complete</div>
+      <div class="progress"><div id="progressBar"></div></div>
+      <div id="checks"></div>
+      <button class="btn secondary" onclick="resetChecks()">Reset checklist</button>
+    </div>
+    <div class="hint">Follow the carrier's procedures and the shipper's temperature instructions.</div>
+  </section>
+</div>
+
+<nav class="nav">
+  <button id="nav-home" class="active" onclick="show('home')">⌂ Home</button>
+  <button id="nav-rpm" onclick="show('rpm')">⚡ RPM</button>
+  <button id="nav-route" onclick="show('route')">🗺️ Route</button>
+  <button id="nav-counter" onclick="show('counter')">💬 Offer</button>
+  <button id="nav-checklist" onclick="show('checklist')">❄️ Reefer</button>
+</nav>
+<div id="toast" class="toast"></div>
+
+<script>
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    try { tg.setHeaderColor("secondary_bg_color"); } catch (_) {}
+  }
+
+  function show(id) {
+    document.querySelectorAll(".view").forEach(el => el.classList.add("hidden"));
+    document.getElementById(id).classList.remove("hidden");
+    document.querySelectorAll(".nav button").forEach(el => el.classList.remove("active"));
+    const nav = document.getElementById("nav-" + id);
+    if (nav) nav.classList.add("active");
+    window.scrollTo({top:0, behavior:"smooth"});
+  }
+
+  function toast(text) {
+    const el = document.getElementById("toast");
+    el.textContent = text;
+    el.style.display = "block";
+    clearTimeout(window.toastTimer);
+    window.toastTimer = setTimeout(() => el.style.display = "none", 2600);
+  }
+
+  function val(id) {
+    const n = Number(document.getElementById(id).value);
+    return Number.isFinite(n) ? n : NaN;
+  }
+  function usd(n) {
+    return new Intl.NumberFormat("en-US", {style:"currency", currency:"USD", maximumFractionDigits:2}).format(n);
+  }
+  function miles(n) {
+    return new Intl.NumberFormat("en-US", {maximumFractionDigits:1}).format(n) + " mi";
+  }
+
+  function calcRPM() {
+    const rate = val("rpmRate"), total = val("rpmMiles");
+    if (!(rate > 0) || !(total > 0)) return toast("Enter a positive rate and total miles.");
+    document.getElementById("rpmBig").textContent = usd(rate / total) + "/mi";
+    document.getElementById("rpmRateOut").textContent = usd(rate);
+    document.getElementById("rpmMilesOut").textContent = miles(total);
+    document.getElementById("rpmResult").style.display = "block";
+  }
+
+  function analyze() {
+    const rate = val("anRate"), loaded = val("anLoaded"), dead = val("anDead");
+    if (!(rate > 0) || !(loaded > 0) || !(dead >= 0)) return toast("Check rate and mileage values.");
+    const total = loaded + dead;
+    if (!(total > 0)) return toast("Total miles must be above zero.");
+    const pct = dead / total * 100;
+    let verdict = pct <= 15 ? "Low" : (pct <= 25 ? "Review" : "High");
+    document.getElementById("anBig").textContent = usd(rate / total) + "/mi";
+    document.getElementById("anTotal").textContent = miles(total);
+    document.getElementById("anLoadedRPM").textContent = usd(rate / loaded) + "/mi";
+    document.getElementById("anPct").textContent = pct.toFixed(1) + "%";
+    document.getElementById("anVerdict").textContent = verdict;
+    document.getElementById("anResult").style.display = "block";
+  }
+
+  function submitRoute() {
+    const truck = document.getElementById("truck").value.trim();
+    const pickup = document.getElementById("pickup").value.trim();
+    const delivery = document.getElementById("delivery").value.trim();
+    const rate = val("routeRate");
+    if (!truck || !pickup || !delivery || !(rate > 0)) {
+      return toast("Fill in all locations and a positive rate.");
+    }
+    if (!tg) return toast("Open this page inside Telegram to send a route request.");
+    tg.sendData(JSON.stringify({
+      action:"route",
+      truck, pickup, delivery,
+      rate:String(rate)
+    }));
+    toast("Route request sent to the bot.");
+  }
+
+  function makeCounter() {
+    const offer = val("offer"), ask = val("ask");
+    const reason = document.getElementById("reason").value.trim() || "the total mileage and operating costs";
+    if (!(offer > 0) || !(ask > 0)) return toast("Enter both offer amounts.");
+    const draft = "Thanks for the offer. Considering " + reason +
+      ", we would need " + usd(ask) +
+      " to make this load work. Is there flexibility to improve the rate from " +
+      usd(offer) + " to " + usd(ask) +
+      "? We can move forward promptly if we can get closer to that number.";
+    document.getElementById("counterText").value = draft;
+    document.getElementById("counterResult").style.display = "block";
+  }
+
+  async function copyCounter() {
+    const text = document.getElementById("counterText").value;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("Message copied.");
+    } catch (_) {
+      const field = document.getElementById("counterText");
+      field.focus(); field.select();
+      toast("Select and copy the message.");
+    }
+  }
+
+  function sendCounter() {
+    const text = document.getElementById("counterText").value;
+    if (!text) return toast("Create a draft first.");
+    if (!tg) return toast("Open this page inside Telegram to send.");
+    tg.sendData(JSON.stringify({action:"counteroffer", text}));
+    toast("Draft sent to the bot chat.");
+  }
+
+  const checklistItems = [
+    ["Commodity and temperature setpoint", "Confirm exact instructions in °F."],
+    ["Continuous or Cycle-Sentry mode", "Confirm the requested operating mode."],
+    ["Pre-cooling and temperature records", "Check shipper requirements."],
+    ["Weight and trailer requirements", "Verify load and equipment details."],
+    ["Pickup appointment", "Confirm local date, time and time zone."],
+    ["Delivery appointment", "Confirm local date, time and time zone."],
+    ["Extra stops and extra-stop pay", "Confirm all stops and compensation."],
+    ["Lumper, detention, layover and TONU", "Review rate confirmation terms."],
+    ["Seal and tracking requirements", "Confirm paperwork and tracking."],
+    ["HOS and realistic transit time", "Check legal driving time and schedule."]
+  ];
+
+  function renderChecks() {
+    document.getElementById("checks").innerHTML = checklistItems.map((item, i) =>
+      `<div class="checkrow">
+        <input id="check-${i}" type="checkbox" onchange="updateProgress()">
+        <label for="check-${i}">${item[0]}<small>${item[1]}</small></label>
+      </div>`
+    ).join("");
+    updateProgress();
+  }
+  function updateProgress() {
+    const done = checklistItems.filter((_, i) => document.getElementById("check-" + i)?.checked).length;
+    document.getElementById("checkCount").textContent = done + " of " + checklistItems.length + " complete";
+    document.getElementById("progressBar").style.width = (done / checklistItems.length * 100) + "%";
+  }
+  function resetChecks() {
+    document.querySelectorAll("#checks input").forEach(el => el.checked = false);
+    updateProgress();
+  }
+  renderChecks();
+</script>
+</body>
+</html>
