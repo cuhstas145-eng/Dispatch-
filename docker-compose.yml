@@ -1,0 +1,59 @@
+services:
+  cargosync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cargosync-dispatch
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      CARGOSYNC_DATA_DIR: /data
+      CARGOSYNC_SECURE_COOKIES: ${CARGOSYNC_SECURE_COOKIES:-1}
+      CARGOSYNC_SESSION_DAYS: ${CARGOSYNC_SESSION_DAYS:-7}
+    volumes:
+      - cargosync_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  caddy:
+    profiles: ["https"]
+    image: caddy:2-alpine
+    container_name: cargosync-caddy
+    restart: unless-stopped
+    environment:
+      CARGOSYNC_DOMAIN: ${CARGOSYNC_DOMAIN:-cargosync.example.com}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      cargosync:
+        condition: service_healthy
+
+  cargosync-bot:
+    profiles: ["bot"]
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: cargosync-telegram-bot
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      CARGOSYNC_WEBAPP_URL: ${CARGOSYNC_WEBAPP_URL:-}
+    depends_on:
+      cargosync:
+        condition: service_healthy
+
+volumes:
+  cargosync_data:
+  caddy_data:
+  caddy_config:
