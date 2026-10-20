@@ -32,6 +32,7 @@ SESSION_COOKIE = "cargosync_session"
 SESSION_DAYS = int(os.getenv("CARGOSYNC_SESSION_DAYS", "7"))
 COOKIE_SECURE = os.getenv("CARGOSYNC_SECURE_COOKIES", "0").lower() in {"1", "true", "yes"}
 MAX_DOCUMENT_BYTES = 15 * 1024 * 1024
+ACCESSORIAL_DOC_TYPES = {"detention", "tonu", "layover", "pallet_exchange", "washout", "lumper"}
 ALLOWED_DOCUMENTS = {
     ".pdf": {"application/pdf"},
     ".png": {"image/png"},
@@ -185,6 +186,20 @@ def init_db() -> None:
             UNIQUE(load_id, doc_type)
         );
         CREATE INDEX IF NOT EXISTS idx_documents_load ON documents(load_id);
+        CREATE TABLE IF NOT EXISTS accessorial_documents (
+            id TEXT PRIMARY KEY,
+            load_id TEXT NOT NULL,
+            doc_type TEXT NOT NULL CHECK(doc_type IN ('detention','tonu','layover','pallet_exchange','washout','lumper')),
+            original_name TEXT NOT NULL,
+            stored_name TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            file_bytes BLOB,
+            uploaded_by TEXT NOT NULL,
+            uploaded_at TEXT NOT NULL,
+            UNIQUE(load_id, doc_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_accessorial_documents_load ON accessorial_documents(load_id);
         CREATE TABLE IF NOT EXISTS audit_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             at TEXT NOT NULL,
@@ -759,8 +774,11 @@ def detect_document(ext: str, content: bytes, declared_type: str) -> str:
 
 
 @app.put("/api/loads/{load_id}/documents/{doc_type}")
-async def upload_document(load_id: str, doc_type: Literal["rate", "pod"], request: Request,
+async def upload_document(load_id: str, doc_type: Literal["rate", "pod", "detention", "tonu", "layover", "pallet_exchange", "washout", "lumper"], request: Request,
                           file: UploadFile = File(...), user: sqlite3.Row = Depends(get_current_user)):
+    # Rate confirmation and POD remain in the original table for compatibility.
+    # Accessorial receipts use their own table so existing database constraints stay untouched.
+    table = "accessorial_documents" if doc_type in ACCESSORIAL_DOC_TYPES else "documents"
     with db() as c:
         find_load_and_authorize(c, user, load_id, require_edit=True)
         ext = Path(file.filename or "document").suffix.lower()
@@ -771,17 +789,18 @@ async def upload_document(load_id: str, doc_type: Literal["rate", "pod"], reques
             raise HTTPException(status_code=413, detail="File exceeds 15 MB limit")
         content_type = detect_document(ext, content, file.content_type or "")
         stored = uuid.uuid4().hex + ext
-        c.execute("INSERT INTO documents(id,load_id,doc_type,original_name,stored_name,content_type,size_bytes,file_bytes,uploaded_by,uploaded_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(load_id,doc_type) DO UPDATE SET id=excluded.id,original_name=excluded.original_name,stored_name=excluded.stored_name,content_type=excluded.content_type,size_bytes=excluded.size_bytes,file_bytes=excluded.file_bytes,uploaded_by=excluded.uploaded_by,uploaded_at=excluded.uploaded_at",
+        c.execute(f"INSERT INTO {table}(id,load_id,doc_type,original_name,stored_name,content_type,size_bytes,file_bytes,uploaded_by,uploaded_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(load_id,doc_type) DO UPDATE SET id=excluded.id,original_name=excluded.original_name,stored_name=excluded.stored_name,content_type=excluded.content_type,size_bytes=excluded.size_bytes,file_bytes=excluded.file_bytes,uploaded_by=excluded.uploaded_by,uploaded_at=excluded.uploaded_at",
                   (uuid.uuid4().hex, load_id, doc_type, Path(file.filename or f"{doc_type}{ext}").name[:255], stored, content_type, len(content), content, user["username"], iso()))
         audit(c, user, "document_uploaded", "load", load_id, {"type": doc_type, "size": len(content)})
     return {"ok": True, "type": doc_type, "name": Path(file.filename or "document").name, "size": len(content)}
 
 
 @app.get("/api/loads/{load_id}/documents/{doc_type}")
-def download_document(load_id: str, doc_type: Literal["rate", "pod"], user: sqlite3.Row = Depends(get_current_user)):
+def download_document(load_id: str, doc_type: Literal["rate", "pod", "detention", "tonu", "layover", "pallet_exchange", "washout", "lumper"], user: sqlite3.Row = Depends(get_current_user)):
+    table = "accessorial_documents" if doc_type in ACCESSORIAL_DOC_TYPES else "documents"
     with db() as c:
         find_load_and_authorize(c, user, load_id)
-        row = c.execute("SELECT * FROM documents WHERE load_id=? AND doc_type=?", (load_id, doc_type)).fetchone()
+        row = c.execute(f"SELECT * FROM {table} WHERE load_id=? AND doc_type=?", (load_id, doc_type)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Document not found")
         filename = row["original_name"]
@@ -797,14 +816,15 @@ def download_document(load_id: str, doc_type: Literal["rate", "pod"], user: sqli
 
 
 @app.delete("/api/loads/{load_id}/documents/{doc_type}")
-def delete_document(load_id: str, doc_type: Literal["rate", "pod"], user: sqlite3.Row = Depends(get_current_user)):
+def delete_document(load_id: str, doc_type: Literal["rate", "pod", "detention", "tonu", "layover", "pallet_exchange", "washout", "lumper"], user: sqlite3.Row = Depends(get_current_user)):
+    table = "accessorial_documents" if doc_type in ACCESSORIAL_DOC_TYPES else "documents"
     with db() as c:
         find_load_and_authorize(c, user, load_id, require_edit=True)
-        row = c.execute("SELECT * FROM documents WHERE load_id=? AND doc_type=?", (load_id, doc_type)).fetchone()
+        row = c.execute(f"SELECT * FROM {table} WHERE load_id=? AND doc_type=?", (load_id, doc_type)).fetchone()
         if row:
             try: (UPLOAD_DIR / row["stored_name"]).unlink(missing_ok=True)
             except OSError: pass
-            c.execute("DELETE FROM documents WHERE load_id=? AND doc_type=?", (load_id, doc_type))
+            c.execute(f"DELETE FROM {table} WHERE load_id=? AND doc_type=?", (load_id, doc_type))
             audit(c, user, "document_deleted", "load", load_id, {"type": doc_type})
     return {"ok": True}
 
