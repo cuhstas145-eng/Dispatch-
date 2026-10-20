@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
+from urllib.request import Request as URLRequest, urlopen
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError
@@ -575,6 +576,194 @@ def delete_user(user_id: str, user: sqlite3.Row = Depends(admin_user)):
         audit(c, user, "user_deleted", "user", user_id, {"username": target["username"]})
         c.execute("DELETE FROM users WHERE id=?", (user_id,))
     return {"ok": True}
+
+
+
+# Map services are proxied through CargoSync so browser CORS policies and tracking
+# protection do not silently break geocoding or driving-route requests.
+_MAP_CACHE: dict[str, tuple[float, Any]] = {}
+_MAP_CACHE_TTL = 300.0
+
+
+def _map_fetch_json(url: str, timeout: float = 8.0) -> Any:
+    request = URLRequest(url, headers={
+        "Accept": "application/json",
+        "User-Agent": "CargoSyncDispatch/1.0 (route planner)",
+    })
+    with urlopen(request, timeout=timeout) as response:
+        if response.status < 200 or response.status >= 300:
+            raise ValueError(f"Map provider returned HTTP {response.status}")
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _map_cache_get(key: str) -> Any | None:
+    entry = _MAP_CACHE.get(key)
+    if not entry:
+        return None
+    expires, value = entry
+    if time.monotonic() >= expires:
+        _MAP_CACHE.pop(key, None)
+        return None
+    return value
+
+
+def _map_cache_set(key: str, value: Any) -> None:
+    _MAP_CACHE[key] = (time.monotonic() + _MAP_CACHE_TTL, value)
+
+
+def _normal_place(value: Any) -> str:
+    return " ".join("".join(c.lower() if c.isalnum() else " " for c in str(value or "")).split())
+
+
+def _photon_places(query: str, limit: int = 8) -> list[dict[str, Any]]:
+    url = "https://photon.komoot.io/api/?q=" + quote(query) + f"&limit={limit}&lang=en"
+    data = _map_fetch_json(url)
+    features = data.get("features", []) if isinstance(data, dict) else []
+    if not isinstance(features, list):
+        return []
+    us = [item for item in features if str(item.get("properties", {}).get("country", "")).lower() in {"united states", "usa"}]
+    candidates = us or features
+    result: list[dict[str, Any]] = []
+    for feature in candidates:
+        properties = feature.get("properties") or {}
+        coordinates = (feature.get("geometry") or {}).get("coordinates") or []
+        if len(coordinates) < 2:
+            continue
+        try:
+            lon, lat = float(coordinates[0]), float(coordinates[1])
+        except (TypeError, ValueError):
+            continue
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            continue
+        city = properties.get("city") or properties.get("locality") or properties.get("name") or properties.get("county") or ""
+        state = properties.get("state") or ""
+        postcode = properties.get("postcode") or ""
+        label = ", ".join(dict.fromkeys(str(v).strip() for v in (city, state, postcode) if str(v or "").strip()))
+        if not label:
+            label = str(properties.get("name") or query)
+        if result and any(
+            _normal_place(previous["label"]) == _normal_place(label)
+            or (abs(previous["lat"] - lat) < 0.0001 and abs(previous["lon"] - lon) < 0.0001)
+            for previous in result
+        ):
+            continue
+        result.append({"label": label, "lat": lat, "lon": lon, "name": label})
+    return result
+
+
+def _nominatim_places(query: str, limit: int = 8) -> list[dict[str, Any]]:
+    url = ("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1"
+           f"&limit={limit}&countrycodes=us&q={quote(query)}")
+    data = _map_fetch_json(url)
+    if not isinstance(data, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in data:
+        try:
+            lat, lon = float(item["lat"]), float(item["lon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        address = item.get("address") or {}
+        city = (address.get("city") or address.get("town") or address.get("village")
+                or address.get("municipality") or address.get("hamlet")
+                or address.get("county") or item.get("name") or "")
+        state, postcode = address.get("state") or "", address.get("postcode") or ""
+        label = ", ".join(dict.fromkeys(str(v).strip() for v in (city, state, postcode) if str(v or "").strip()))
+        if not label:
+            label = ", ".join(str(item.get("display_name") or query).split(",")[:3]).strip()
+        result.append({"label": label, "lat": lat, "lon": lon, "name": item.get("display_name") or label})
+    return result
+
+
+def _resolve_place(query: str) -> dict[str, Any]:
+    cache_key = "geo:" + _normal_place(query)
+    cached = _map_cache_get(cache_key)
+    if cached:
+        return cached
+    errors: list[str] = []
+    for provider in (_photon_places, _nominatim_places):
+        try:
+            places = provider(query, 5)
+            if places:
+                nq = _normal_place(query)
+                best = next((p for p in places if nq and nq in _normal_place(p["label"])), places[0])
+                _map_cache_set(cache_key, best)
+                return best
+        except Exception as exc:
+            errors.append(str(exc))
+    raise HTTPException(status_code=502, detail="Could not find that location. Try a US city with state or a ZIP code.")
+
+
+@app.get("/api/maps/suggest")
+def map_suggestions(q: str, user: sqlite3.Row = Depends(get_current_user)):
+    query = " ".join(str(q or "").split())[:160]
+    if len(query) < 2:
+        return {"results": []}
+    cache_key = "suggest:" + _normal_place(query)
+    cached = _map_cache_get(cache_key)
+    if cached is not None:
+        return {"results": cached}
+    errors: list[str] = []
+    results: list[dict[str, Any]] = []
+    for provider in (_photon_places, _nominatim_places):
+        try:
+            results = provider(query, 8)
+            if results:
+                break
+        except Exception as exc:
+            errors.append(str(exc))
+    _map_cache_set(cache_key, results)
+    return {"results": results}
+
+
+@app.get("/api/maps/geocode")
+def map_geocode(q: str, user: sqlite3.Row = Depends(get_current_user)):
+    query = " ".join(str(q or "").split())[:200]
+    if len(query) < 2:
+        raise HTTPException(status_code=400, detail="Enter a city, state or ZIP code")
+    try:
+        place = _resolve_place(query)
+        return {"lat": place["lat"], "lon": place["lon"], "name": place.get("name") or place["label"], "label": place["label"]}
+    except HTTPException:
+        raise
+
+
+@app.get("/api/maps/route")
+def map_route(
+    from_lat: float, from_lon: float, to_lat: float, to_lon: float,
+    user: sqlite3.Row = Depends(get_current_user),
+):
+    values = (from_lat, from_lon, to_lat, to_lon)
+    if not all(math.isfinite(value) for value in values):
+        raise HTTPException(status_code=400, detail="Invalid map coordinates")
+    if not (-90 <= from_lat <= 90 and -90 <= to_lat <= 90 and -180 <= from_lon <= 180 and -180 <= to_lon <= 180):
+        raise HTTPException(status_code=400, detail="Map coordinates are out of range")
+    cache_key = "route:" + ",".join(f"{value:.5f}" for value in values)
+    cached = _map_cache_get(cache_key)
+    if cached is not None:
+        return cached
+    coordinates = f"{from_lon},{from_lat};{to_lon},{to_lat}"
+    endpoints = (
+        "https://router.project-osrm.org/route/v1/driving/" + coordinates + "?overview=full&geometries=geojson&steps=false",
+        "https://routing.openstreetmap.de/routed-car/route/v1/driving/" + coordinates + "?overview=full&geometries=geojson&steps=false",
+    )
+    for endpoint in endpoints:
+        try:
+            data = _map_fetch_json(endpoint, timeout=12.0)
+            routes = data.get("routes") if isinstance(data, dict) else None
+            if data.get("code") != "Ok" or not routes:
+                continue
+            route = routes[0]
+            geometry = route.get("geometry") or {}
+            if not geometry.get("coordinates"):
+                continue
+            distance, duration = float(route["distance"]), float(route["duration"])
+            result = {"miles": distance / 1609.344, "minutes": duration / 60.0, "geometry": geometry}
+            _map_cache_set(cache_key, result)
+            return result
+        except Exception:
+            continue
+    raise HTTPException(status_code=502, detail="Both driving-route services are unavailable. The map pins can still be shown; retry route calculation shortly.")
 
 
 @app.get("/api/workspace/state")
