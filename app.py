@@ -713,7 +713,8 @@ def map_suggestions(q: str, user: sqlite3.Row = Depends(get_current_user)):
                 break
         except Exception as exc:
             errors.append(str(exc))
-    _map_cache_set(cache_key, results)
+    if results:
+        _map_cache_set(cache_key, results)
     return {"results": results}
 
 
