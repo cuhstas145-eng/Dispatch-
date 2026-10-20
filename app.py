@@ -612,6 +612,62 @@ def _map_cache_set(key: str, value: Any) -> None:
     _MAP_CACHE[key] = (time.monotonic() + _MAP_CACHE_TTL, value)
 
 
+_MAP_ASSET_URLS = {
+    "leaflet.js": "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js",
+    "leaflet.css": "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css",
+}
+_MAP_IMAGE_ASSETS = {"layers.png", "layers-2x.png", "marker-icon.png", "marker-icon-2x.png", "marker-shadow.png"}
+
+
+def _load_map_asset(name: str) -> bytes:
+    key = "map-asset:" + name
+    cached = _map_cache_get(key)
+    if cached is not None:
+        return cached
+    if name in _MAP_ASSET_URLS:
+        url = _MAP_ASSET_URLS[name]
+    elif name.startswith("image:") and name[6:] in _MAP_IMAGE_ASSETS:
+        url = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/" + name[6:]
+    else:
+        raise HTTPException(status_code=404, detail="Map asset not found")
+    try:
+        request = URLRequest(url, headers={
+            "Accept": "text/css, application/javascript, image/png, image/*;q=0.8",
+            "User-Agent": "CargoSyncDispatch/1.0 (map assets)",
+        })
+        with urlopen(request, timeout=12.0) as response:
+            if response.status < 200 or response.status >= 300:
+                raise ValueError(f"Map asset returned HTTP {response.status}")
+            content = response.read(2_000_001)
+            if not content or len(content) > 2_000_000:
+                raise ValueError("Map asset size is invalid")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Could not load interactive map assets") from exc
+    _map_cache_set(key, content)
+    return content
+
+
+@app.get("/api/maps/leaflet.js")
+def map_leaflet_script(user: sqlite3.Row = Depends(get_current_user)):
+    return Response(content=_load_map_asset("leaflet.js"), media_type="application/javascript",
+                    headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/api/maps/leaflet.css")
+def map_leaflet_styles(user: sqlite3.Row = Depends(get_current_user)):
+    return Response(content=_load_map_asset("leaflet.css"), media_type="text/css",
+                    headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/api/maps/images/{asset_name}")
+def map_leaflet_image(asset_name: str, user: sqlite3.Row = Depends(get_current_user)):
+    media_type = "image/png"
+    if asset_name == "marker-shadow.png":
+        media_type = "image/png"
+    return Response(content=_load_map_asset("image:" + asset_name), media_type=media_type,
+                    headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
+
+
 def _normal_place(value: Any) -> str:
     return " ".join("".join(c.lower() if c.isalnum() else " " for c in str(value or "")).split())
 
