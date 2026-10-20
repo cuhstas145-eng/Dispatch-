@@ -256,7 +256,7 @@ $('calculateRoute').addEventListener('click',()=>{routeSeq++;clearTimeout(routeT
 let autoRouteTimer=null;
 ['pickupLocation','deliveryLocation'].forEach(id=>$(id).addEventListener('change',()=>{
  const pu=$('pickupLocation').value.trim().toLowerCase(),del=$('deliveryLocation').value.trim().toLowerCase();
- if(pu&&del&&cityGeoCache.has(pu)&&cityGeoCache.has(del)){clearTimeout(autoRouteTimer);autoRouteTimer=setTimeout(()=>{routeSeq++;clearTimeout(routeTimer);updateRoute()},180)}
+ if(pu&&del){clearTimeout(autoRouteTimer);autoRouteTimer=setTimeout(()=>{routeSeq++;clearTimeout(routeTimer);updateRoute()},260)}
 }));
 ['truckLocation','pickupLocation','deliveryLocation'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();updateRoute()}}));
 async function geo(address){
