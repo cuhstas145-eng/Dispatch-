@@ -405,6 +405,7 @@ class DriverBody(BaseModel):
     status: str = Field(default="Available", max_length=40)
     dispatcherId: str = Field(min_length=1, max_length=100)
     phone: str = Field(default="", max_length=40)
+    trailerNumber: str = Field(default="", max_length=50)
     notes: str = Field(default="", max_length=2000)
 
 
@@ -413,6 +414,7 @@ class DriverPatch(BaseModel):
     status: str | None = Field(default=None, max_length=40)
     truck: str | None = Field(default=None, min_length=1, max_length=50)
     phone: str | None = Field(default=None, max_length=40)
+    trailerNumber: str | None = Field(default=None, max_length=50)
     notes: str | None = Field(default=None, max_length=2000)
 
 
@@ -937,7 +939,7 @@ def create_driver(body: DriverBody, user: sqlite3.Row = Depends(admin_user)):
             raise HTTPException(status_code=409, detail="That truck number already exists")
         if any(str(d.get("name", "")).lower() == body.name.strip().lower() for d in drivers):
             raise HTTPException(status_code=409, detail="A driver with that name already exists")
-        driver = {"id": "driver-" + uuid.uuid4().hex, "name": body.name.strip(), "truck": body.truck.strip(), "status": body.status.strip() or "Available", "dispatcherId": body.dispatcherId, "phone": body.phone.strip(), "notes": body.notes.strip(), "createdAt": iso()}
+        driver = {"id": "driver-" + uuid.uuid4().hex, "name": body.name.strip(), "truck": body.truck.strip(), "status": body.status.strip() or "Available", "dispatcherId": body.dispatcherId, "phone": body.phone.strip(), "trailerNumber": body.trailerNumber.strip(), "notes": body.notes.strip(), "createdAt": iso()}
         drivers.append(driver)
         now = iso()
         c.execute("INSERT INTO workspace_state(state_key,user_id,value_json,version,updated_at,updated_by) VALUES('cargosync_drivers_v1','',?,?,?,?) ON CONFLICT(state_key,user_id) DO UPDATE SET value_json=excluded.value_json,version=workspace_state.version+1,updated_at=excluded.updated_at,updated_by=excluded.updated_by",
@@ -970,6 +972,8 @@ def patch_driver(driver_id: str, body: DriverPatch, user: sqlite3.Row = Depends(
             target["truck"] = new_truck
         if body.phone is not None:
             target["phone"] = body.phone.strip()
+        if body.trailerNumber is not None:
+            target["trailerNumber"] = body.trailerNumber.strip()
         if body.notes is not None:
             target["notes"] = body.notes.strip()
         if body.status is not None:
@@ -994,7 +998,7 @@ def patch_driver(driver_id: str, body: DriverPatch, user: sqlite3.Row = Depends(
             if changed_loads:
                 c.execute("INSERT INTO workspace_state(state_key,user_id,value_json,version,updated_at,updated_by) VALUES('cargosync_schedule_v2','',?,?,?,?) ON CONFLICT(state_key,user_id) DO UPDATE SET value_json=excluded.value_json,version=workspace_state.version+1,updated_at=excluded.updated_at,updated_by=excluded.updated_by",
                           (json.dumps(loads, ensure_ascii=False), lver + 1, now, user["username"]))
-        audit(c, user, "driver_updated", "driver", driver_id, {"dispatcherId": target.get("dispatcherId"), "assignmentChanged": assigned_changed, "truckChanged": truck_changed, "phoneUpdated": body.phone is not None, "notesUpdated": body.notes is not None})
+        audit(c, user, "driver_updated", "driver", driver_id, {"dispatcherId": target.get("dispatcherId"), "assignmentChanged": assigned_changed, "truckChanged": truck_changed, "phoneUpdated": body.phone is not None, "trailerNumberUpdated": body.trailerNumber is not None, "notesUpdated": body.notes is not None})
         return {"driver": target, "version": ver + 1}
 
 
