@@ -34,7 +34,7 @@ def test_server_auth_shared_schedule_roles_and_documents():
     driver = r.json()["driver"]
 
     base = admin.get("/api/workspace/state").json()
-    load = {"id": "load-1", "number": "CS-1001", "rate": 2450, "driver": driver["name"], "truck": driver["truck"], "dispatcherId": dispatcher["id"], "pu": "Chicago, IL", "del": "Atlanta, GA", "puDate": "2026-10-20", "delDate": "2026-10-22", "status": "booked", "rateFileName": "", "podFileName": ""}
+    load = {"id": "load-1", "number": "CS-1001", "rate": 2450, "driver": driver["name"], "truck": driver["truck"], "dispatcherId": dispatcher["id"], "pu": "Chicago, IL", "del": "Atlanta, GA", "puDate": "2026-10-20", "delDate": "2026-10-20", "status": "booked", "rateFileName": "", "podFileName": ""}
     key = "cargosync_schedule_v2"
     r = admin.put(f"/api/workspace/state/{key}", json={"value": [load], "base_version": base["versions"][key]})
     assert r.status_code == 200, r.text
@@ -73,6 +73,25 @@ def test_server_auth_shared_schedule_roles_and_documents():
     download = disp.get("/api/loads/load-1/documents/rate")
     assert download.status_code == 200
     assert download.content == pdf
+
+    # PU and DEL on the same calendar date are valid.
+    same_day_state = admin.get("/api/workspace/state").json()
+    saved_load = same_day_state["states"][key][0]
+    assert saved_load["puDate"] == saved_load["delDate"] == "2026-10-20"
+
+    # Every standard accessorial attachment has an independent, team-shared document slot.
+    for doc_type in ("detention", "tonu", "layover", "pallet_exchange", "washout", "lumper"):
+        upload = admin.put(
+            f"/api/loads/load-1/documents/{doc_type}",
+            files={"file": (f"{doc_type}.pdf", pdf, "application/pdf")},
+        )
+        assert upload.status_code == 200, f"{doc_type}: {upload.text}"
+        download = disp.get(f"/api/loads/load-1/documents/{doc_type}")
+        assert download.status_code == 200, f"{doc_type}: {download.text}"
+        assert download.content == pdf
+    removed = admin.delete("/api/loads/load-1/documents/detention")
+    assert removed.status_code == 200, removed.text
+    assert disp.get("/api/loads/load-1/documents/detention").status_code == 404
 
     # Viewer is read-only for the team Schedule.
     r = admin.post("/api/users", json={"name": "Read Only", "username": "viewer1", "password": "Viewer-Sample-Pass-2026!", "role": "viewer"})
