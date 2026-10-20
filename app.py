@@ -900,6 +900,8 @@ def put_workspace_state(key: str, body: StateBody, user: sqlite3.Row = Depends(g
             new_by_id = {str(l.get("id")): l for l in body.value if isinstance(l, dict)}
             if len(new_by_id) != len(body.value) or any(not l.get("id") for l in body.value if isinstance(l, dict)):
                 raise HTTPException(status_code=400, detail="Each load must have a unique ID")
+            if effective_role(user) == "pro_viewer" and set(old_by_id) - set(new_by_id):
+                raise HTTPException(status_code=403, detail="Pro Viewer accounts can add and edit loads but cannot delete them")
             if user["role"] != "admin":
                 # Dispatcher changes are limited to loads assigned to their own drivers; other loads must be preserved unchanged.
                 for old_id, old in old_by_id.items():
