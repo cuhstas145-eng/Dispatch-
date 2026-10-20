@@ -218,6 +218,14 @@ def init_db() -> None:
             schema = schema.replace("id INTEGER PRIMARY KEY AUTOINCREMENT", "id BIGSERIAL PRIMARY KEY")
             schema = schema.replace("file_bytes BLOB", "file_bytes BYTEA")
         c.executescript(schema)
+        # Keep existing databases compatible: Pro Viewer is stored as a viewer
+        # plus a capability flag so old SQLite CHECK constraints remain valid.
+        if USE_POSTGRES:
+            c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_viewer INTEGER NOT NULL DEFAULT 0")
+        else:
+            user_columns = {row["name"] for row in c.execute("PRAGMA table_info(users)").fetchall()}
+            if "pro_viewer" not in user_columns:
+                c.execute("ALTER TABLE users ADD COLUMN pro_viewer INTEGER NOT NULL DEFAULT 0")
 
 
 init_db()
@@ -236,7 +244,7 @@ def audit(c: sqlite3.Connection, user: sqlite3.Row | dict | None, action: str,
 def public_user(row: sqlite3.Row | dict) -> dict[str, Any]:
     return {
         "id": row["id"], "name": row["name"], "username": row["username"],
-        "role": row["role"], "active": bool(row["active"]),
+        "role": "pro_viewer" if bool(row["pro_viewer"]) else row["role"], "active": bool(row["active"]),
         "mustChangePassword": bool(row["must_change_password"]),
         "createdAt": row["created_at"], "createdBy": row["created_by"] or "",
     }
@@ -264,16 +272,22 @@ def get_current_user(request: Request) -> sqlite3.Row:
         return row
 
 
+def effective_role(user: sqlite3.Row | dict) -> str:
+    """Return the public role while preserving compatibility with existing DB constraints."""
+    return "pro_viewer" if bool(user["pro_viewer"]) else str(user["role"])
+
+
 def admin_user(user: sqlite3.Row = Depends(get_current_user)) -> sqlite3.Row:
-    if user["role"] != "admin":
+    if effective_role(user) != "admin":
         raise HTTPException(status_code=403, detail="Administrator access required")
     return user
 
 
 def can_edit_load(user: sqlite3.Row, load: dict, drivers: list[dict]) -> bool:
-    if user["role"] == "admin":
+    role = effective_role(user)
+    if role in {"admin", "pro_viewer"}:
         return True
-    if user["role"] != "dispatcher":
+    if role != "dispatcher":
         return False
     # Never trust the dispatcherId supplied by the browser alone. The driver's
     # current roster assignment is authoritative, including after reassignment.
@@ -370,7 +384,7 @@ class UserCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=12, max_length=256)
-    role: Literal["dispatcher", "viewer", "admin"] = "dispatcher"
+    role: Literal["dispatcher", "viewer", "pro_viewer", "admin"] = "dispatcher"
 
     @field_validator("username")
     @classmethod
@@ -538,8 +552,10 @@ def create_user(body: UserCreate, user: sqlite3.Row = Depends(admin_user)):
         if c.execute("SELECT 1 FROM users WHERE username=? COLLATE NOCASE", (body.username,)).fetchone():
             raise HTTPException(status_code=409, detail="That login already exists")
         now = iso()
-        c.execute("INSERT INTO users(id,name,username,password_hash,role,active,must_change_password,created_at,created_by) VALUES(?,?,?,?,?,1,1,?,?)",
-                  (new_id, body.name, body.username, password_hasher.hash(body.password), body.role, now, user["username"]))
+        stored_role = "viewer" if body.role == "pro_viewer" else body.role
+        pro_viewer = 1 if body.role == "pro_viewer" else 0
+        c.execute("INSERT INTO users(id,name,username,password_hash,role,active,must_change_password,created_at,created_by,pro_viewer) VALUES(?,?,?,?,?,1,1,?,?,?)",
+                  (new_id, body.name, body.username, password_hasher.hash(body.password), stored_role, now, user["username"], pro_viewer))
         audit(c, user, "user_created", "user", new_id, {"username": body.username, "role": body.role})
         row = c.execute("SELECT * FROM users WHERE id=?", (new_id,)).fetchone()
         return {"user": public_user(row)}
@@ -849,9 +865,9 @@ def put_workspace_state(key: str, body: StateBody, user: sqlite3.Row = Depends(g
         raise HTTPException(status_code=413, detail="Too many records")
     if key == "cargosync_drivers_v1" and user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Only administrators can manage the driver roster")
-    if key == "cargosync_schedule_v2" and user["role"] == "viewer":
+    if key == "cargosync_schedule_v2" and effective_role(user) == "viewer":
         raise HTTPException(status_code=403, detail="Viewer accounts cannot edit Schedule")
-    if key == "reefer_dispatch_stage1_loads_v1" and user["role"] == "viewer":
+    if key == "reefer_dispatch_stage1_loads_v1" and effective_role(user) == "viewer":
         raise HTTPException(status_code=403, detail="Viewer accounts cannot save Route Planner loads")
 
     with db() as c:
