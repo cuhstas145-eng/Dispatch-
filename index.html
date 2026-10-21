@@ -393,7 +393,7 @@ function installCityAutocomplete(inputOrId){
  const labelForPhoton=f=>{const p=f?.properties||{},city=p.city||p.locality||p.name||p.county||'',state=p.state||'',zip=p.postcode||'';return [city,state,zip].filter((v,i,a)=>v&&a.indexOf(v)===i).join(', ')};
  const labelForNominatim=f=>{const p=f?.address||{},city=p.city||p.town||p.village||p.municipality||p.hamlet||p.county||f?.name||'',state=p.state||'',zip=p.postcode||'';return [city,state,zip].filter((v,i,a)=>v&&a.indexOf(v)===i).join(', ')||String(f?.display_name||'').split(',').slice(0,3).join(', ')};
  const draw=()=>{if(!results.length){list.innerHTML='<div class="city-suggestion-note">No city found. Try “City, State” or a ZIP code.</div>';list.hidden=false;positionList();return}list.innerHTML=results.map((r,i)=>'<button type="button" class="city-suggestion" role="option" aria-selected="'+(i===active?'true':'false')+'" data-city-index="'+i+'">'+esc(r.label)+'</button>').join('');list.hidden=false;positionList()};
- const choose=r=>{if(!r)return;input.value=r.label;window.CargoSyncCityGeoCache.set(r.label.trim().toLowerCase(),{lat:r.lat,lon:r.lon,name:r.label});list.hidden=true;results=[];active=-1;selectedBySuggestion=true;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}))};
+ const choose=r=>{if(!r)return;input.value=r.label;(window.CargoSyncCityGeoCache instanceof Map?window.CargoSyncCityGeoCache:(window.CargoSyncCityGeoCache=new Map())).set(r.label.trim().toLowerCase(),{lat:r.lat,lon:r.lon,name:r.label});list.hidden=true;results=[];active=-1;selectedBySuggestion=true;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}))};
  const search=async q=>{const seq=++requestSeq;let found=[];
    try{const res=await fetch('/api/maps/suggest?q='+encodeURIComponent(q),{credentials:'same-origin',headers:{Accept:'application/json'}});if(res.ok){const json=await res.json();found=Array.isArray(json.results)?json.results.map(x=>({lat:Number(x.lat),lon:Number(x.lon),label:String(x.label||x.name||'')})).filter(x=>x.label&&Number.isFinite(x.lat)&&Number.isFinite(x.lon)):[];}}
    catch(_){}
@@ -460,7 +460,8 @@ let autoRouteTimer=null;
 async function geo(address){
   const q=String(address||'').trim();
   if(!q) throw new Error('Enter a location for every stop.');
-  const cached=window.CargoSyncCityGeoCache.get(q.toLowerCase());
+  const cityGeoCache=window.CargoSyncCityGeoCache instanceof Map?window.CargoSyncCityGeoCache:(window.CargoSyncCityGeoCache=new Map());
+  const cached=cityGeoCache.get(q.toLowerCase());
   if(cached&&Number.isFinite(cached.lat)&&Number.isFinite(cached.lon))return {...cached};
   const norm=v=>String(v||'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
   try{const response=await fetch('/api/maps/geocode?q='+encodeURIComponent(q),{credentials:'same-origin',headers:{Accept:'application/json'}});if(response.ok){const place=await response.json(),lat=Number(place.lat),lon=Number(place.lon);if(Number.isFinite(lat)&&Number.isFinite(lon))return {lat,lon,name:place.name||place.label||q}}}catch(_){}
@@ -685,7 +686,8 @@ let autoRouteTimer=null;
 async function geo(address){
   const q=String(address||'').trim();
   if(!q) throw new Error('Enter a location for every stop.');
-  const cached=window.CargoSyncCityGeoCache.get(q.toLowerCase());
+  const cityGeoCache=window.CargoSyncCityGeoCache instanceof Map?window.CargoSyncCityGeoCache:(window.CargoSyncCityGeoCache=new Map());
+  const cached=cityGeoCache.get(q.toLowerCase());
   if(cached&&Number.isFinite(cached.lat)&&Number.isFinite(cached.lon))return {...cached};
   const norm=v=>String(v||'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
   try{const response=await fetch('/api/maps/geocode?q='+encodeURIComponent(q),{credentials:'same-origin',headers:{Accept:'application/json'}});if(response.ok){const place=await response.json(),lat=Number(place.lat),lon=Number(place.lon);if(Number.isFinite(lat)&&Number.isFinite(lon))return {lat,lon,name:place.name||place.label||q}}}catch(_){}
