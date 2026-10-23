@@ -390,7 +390,10 @@ const ACCESSORIAL_DOCS=[{key:'detention',label:'Detention'},{key:'tonu',label:'T
 window.CargoSyncCityGeoCache=window.CargoSyncCityGeoCache||new Map();let citySuggestCounter=0;
 function installCityAutocomplete(inputOrId){
  const input=typeof inputOrId==='string'?$(inputOrId):inputOrId;
- if(!input||input.dataset.cityAutocomplete==='1')return;
+ if(!input)return;
+ // These location fields use the delegated live autocomplete handler at the end of the page.
+ if(input.matches('#slPU,#slDEL,#truckLocation,#pickupLocation,#deliveryLocation,.stop-address'))return;
+ if(input.dataset.cityAutocomplete==='1')return;
  input.dataset.cityAutocomplete='1';input.setAttribute('autocomplete','off');input.setAttribute('aria-autocomplete','list');
  const host=input.parentElement;if(!host)return;host.classList.add('city-autocomplete-host');
  const list=document.createElement('div');list.className='city-suggestions';list.hidden=true;list.id='city-suggestions-'+(++citySuggestCounter);list.setAttribute('role','listbox');list.style.position='fixed';list.style.left='8px';list.style.top='8px';list.style.zIndex='1000000';document.body.appendChild(list);input.setAttribute('aria-controls',list.id);
@@ -659,4 +662,116 @@ try{loads=JSON.parse(localStorage.getItem(KEY)||'[]');if(!Array.isArray(loads))l
 })();
 </script>
 <style id="cargoCloudNoticeStyle">#cargoCloudNotice{position:fixed;right:18px;bottom:18px;z-index:99999;max-width:min(440px,calc(100vw - 36px));padding:12px 15px;border:1px solid #5e7488;border-radius:12px;background:#15232f;color:#f0f7fc;box-shadow:0 12px 40px #0008;font:12px/1.5 system-ui;display:none}#cargoCloudNotice button{margin-left:12px;padding:2px 7px}</style><div id="cargoCloudNotice" role="status" aria-live="polite"></div><script>window.showCargoCloudNotice=(message)=>{const el=document.getElementById('cargoCloudNotice');if(!el)return;el.textContent=String(message);el.style.display='block';clearTimeout(window.__cargoCloudNoticeTimer);window.__cargoCloudNoticeTimer=setTimeout(()=>el.style.display='none',6000)};</script>
+<script id="cargoCityLiveAutocomplete">
+(()=> {
+ const selector='#slPU,#slDEL,#truckLocation,#pickupLocation,#deliveryLocation,.stop-address';
+ let activeInput=null,results=[],activeIndex=0,debounce=null,requestSeq=0,suppressInput=null;
+ const menu=document.createElement('div');
+ menu.className='city-suggestions';
+ menu.id='cargo-city-live-suggestions';
+ menu.hidden=true;
+ menu.style.position='fixed';
+ menu.style.zIndex='2147483647';
+ menu.style.pointerEvents='auto';
+ document.body.appendChild(menu);
+ const position=()=>{
+   if(!activeInput||menu.hidden)return;
+   const r=activeInput.getBoundingClientRect(),vw=window.innerWidth,vh=window.innerHeight;
+   if(!vw||!vh)return;
+   const width=Math.max(160,Math.min(r.width,vw-16)),below=vh-r.bottom-8,above=r.top-8;
+   const openAbove=below<170&&above>below+40;
+   const available=Math.max(70,Math.min(240,openAbove?above:below));
+   menu.style.width=width+'px';
+   menu.style.maxHeight=available+'px';
+   menu.style.left=Math.max(8,Math.min(r.left,vw-width-8))+'px';
+   menu.style.top=(openAbove?Math.max(8,r.top-available-5):Math.min(vh-available-8,r.bottom+5))+'px';
+ };
+ const hide=()=>{menu.hidden=true;activeInput=null;results=[];activeIndex=0};
+ const render=(items,note)=>{
+   results=items||[];
+   menu.innerHTML='';
+   if(results.length){
+     menu.innerHTML=results.map((r,i)=>'<button type="button" class="city-suggestion" role="option" aria-selected="'+(i===activeIndex?'true':'false')+'" data-live-city-index="'+i+'">'+String(r.label||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))+'</button>').join('');
+   }else{
+     const noteEl=document.createElement('div');
+     noteEl.className='city-suggestion-note';
+     noteEl.textContent=note||'No city suggestions found. Try City, State or ZIP.';
+     menu.appendChild(noteEl);
+   }
+   menu.hidden=false;
+   menu.style.display='block';
+   position();
+ };
+ const normalize=x=>({label:String(x.label||x.name||'').trim(),lat:Number(x.lat),lon:Number(x.lon)}).filter;
+ const clean=list=>(Array.isArray(list)?list:[]).map(x=>({label:String(x.label||x.name||'').trim(),lat:Number(x.lat),lon:Number(x.lon)})).filter(x=>x.label&&Number.isFinite(x.lat)&&Number.isFinite(x.lon)).slice(0,8);
+ const search=async(input,q,seq)=>{
+   render([],'Searching locations…');
+   let found=[];
+   try{
+     const res=await fetch('/api/maps/suggest?q='+encodeURIComponent(q),{credentials:'same-origin',headers:{Accept:'application/json'}});
+     if(res.ok){const data=await res.json();found=clean(data.results)}
+   }catch(_){}
+   if(seq!==requestSeq||input!==activeInput)return;
+   if(!found.length){
+     try{
+       const res=await fetch('https://photon.komoot.io/api/?q='+encodeURIComponent(q)+'&limit=8&lang=en',{headers:{Accept:'application/json'}});
+       if(res.ok){
+         const data=await res.json(),features=Array.isArray(data.features)?data.features:[],us=features.filter(x=>/united states|usa/i.test(String(x.properties?.country||''))),source=us.length?us:features;
+         found=source.map(x=>{const p=x.properties||{},coords=x.geometry?.coordinates||[],city=p.city||p.locality||p.name||p.county||'',state=p.state||'',zip=p.postcode||'';return {label:[city,state,zip].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).join(', '),lat:Number(coords[1]),lon:Number(coords[0])}}).filter(x=>x.label&&Number.isFinite(x.lat)&&Number.isFinite(x.lon)).slice(0,8);
+       }
+     }catch(_){}
+   }
+   if(seq!==requestSeq||input!==activeInput)return;
+   if(found.length){
+     results=found;activeIndex=0;
+     menu.innerHTML=results.map((r,i)=>'<button type="button" class="city-suggestion" role="option" aria-selected="'+(i===activeIndex?'true':'false')+'" data-live-city-index="'+i+'">'+r.label.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))+'</button>').join('');
+     menu.hidden=false;menu.style.display='block';position();
+   }else render([],'No city suggestions found. Try “City, State” or a ZIP code.');
+ };
+ const begin=input=>{
+   if(!input.matches(selector))return;
+   if(suppressInput===input){suppressInput=null;return}
+   activeInput=input;
+   const q=input.value.trim();clearTimeout(debounce);
+   const seq=++requestSeq;
+   if(q.length<2){hide();return}
+   activeIndex=0;
+   render([],'Searching locations…');
+   debounce=setTimeout(()=>search(input,q,seq),180);
+ };
+ document.addEventListener('input',e=>{if(e.target instanceof HTMLInputElement&&e.target.matches(selector))begin(e.target)},true);
+ document.addEventListener('focusin',e=>{
+   if(!(e.target instanceof HTMLInputElement)||!e.target.matches(selector))return;
+   activeInput=e.target;
+   if(e.target.value.trim().length>=2)begin(e.target);
+ },true);
+ document.addEventListener('keydown',e=>{
+   if(!activeInput||menu.hidden||e.target!==activeInput)return;
+   if(e.key==='ArrowDown'&&results.length){e.preventDefault();activeIndex=(activeIndex+1)%results.length;menu.querySelectorAll('[data-live-city-index]').forEach((b,i)=>b.setAttribute('aria-selected',i===activeIndex?'true':'false'))}
+   else if(e.key==='ArrowUp'&&results.length){e.preventDefault();activeIndex=(activeIndex-1+results.length)%results.length;menu.querySelectorAll('[data-live-city-index]').forEach((b,i)=>b.setAttribute('aria-selected',i===activeIndex?'true':'false'))}
+   else if(e.key==='Enter'&&!menu.hidden&&results.length){e.preventDefault();e.stopImmediatePropagation();choose(results[activeIndex])}
+   else if(e.key==='Escape'&&!menu.hidden){e.preventDefault();hide()}
+ },true);
+ const choose=r=>{
+   if(!r||!activeInput)return;
+   const input=activeInput;
+   (window.CargoSyncCityGeoCache instanceof Map?window.CargoSyncCityGeoCache:(window.CargoSyncCityGeoCache=new Map())).set(r.label.trim().toLowerCase(),{lat:r.lat,lon:r.lon,name:r.label});
+   input.value=r.label;
+   hide();
+   suppressInput=input;
+   input.dispatchEvent(new Event('input',{bubbles:true}));
+   input.dispatchEvent(new Event('change',{bubbles:true}));
+ };
+ menu.addEventListener('pointerdown',e=>{
+   const b=e.target.closest('[data-live-city-index]');
+   if(!b)return;
+   e.preventDefault();
+   const r=results[Number(b.dataset.liveCityIndex)];
+   choose(r);
+ });
+ document.addEventListener('pointerdown',e=>{if(!menu.hidden&&e.target!==activeInput&&!menu.contains(e.target))hide()},false);
+ window.addEventListener('resize',position);
+ window.addEventListener('scroll',position,true);
+})();
+</script>
 </body></html>
