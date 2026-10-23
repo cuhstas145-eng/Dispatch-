@@ -980,6 +980,11 @@ def finance_summary(user: sqlite3.Row = Depends(get_current_user)):
         except (TypeError, ValueError):
             return 0.0
 
+    def owner_for(load: dict, assignments: dict) -> Any:
+        key = (str(load.get("driver", "")), str(load.get("truck", "")))
+        # A current driver-roster assignment wins even when explicitly unassigned.
+        return assignments[key] if key in assignments else load.get("dispatcherId")
+
     mileage_budget = [20]
     mileage_memo: dict[str, float] = {}
 
@@ -1081,7 +1086,7 @@ def finance_summary(user: sqlite3.Row = Depends(get_current_user)):
             for load in loads:
                 if not isinstance(load, dict):
                     continue
-                owner_id = assignments.get((str(load.get("driver", "")), str(load.get("truck", "")))) or load.get("dispatcherId")
+                owner_id = owner_for(load, assignments)
                 if owner_id == user["id"]:
                     own_loads.append(load)
             own_commission = commissions.get(user["id"], 0.0)
@@ -1105,7 +1110,7 @@ def finance_summary(user: sqlite3.Row = Depends(get_current_user)):
         for load in loads:
             if not isinstance(load, dict):
                 continue
-            dispatcher_id = assignment_map.get((str(load.get("driver", "")), str(load.get("truck", "")))) or load.get("dispatcherId")
+            dispatcher_id = owner_for(load, assignment_map)
             if dispatcher_id in by_dispatcher:
                 by_dispatcher[dispatcher_id].append(load)
         dispatchers = []
@@ -1121,7 +1126,7 @@ def finance_summary(user: sqlite3.Row = Depends(get_current_user)):
         company["commissionPayouts"] = round(sum(item["earnings"] for item in dispatchers), 2)
         company["unassignedLoads"] = sum(
             1 for load in loads if isinstance(load, dict)
-            and (assignment_map.get((str(load.get("driver", "")), str(load.get("truck", "")))) or load.get("dispatcherId")) not in by_dispatcher
+            and owner_for(load, assignment_map) not in by_dispatcher
         )
         return {"scope": "company", "company": company, "dispatchers": dispatchers}
 
