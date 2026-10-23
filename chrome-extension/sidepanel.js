@@ -32,33 +32,67 @@ async function routeBetween(points) {
   return data.routes[0];
 }
 function fmtDuration(seconds){const h=Math.round(seconds/3600);const d=Math.floor(h/24);return d?d+"d "+(h%24)+"h":h+"h";}
-let leafletMap = null;
-let routeLayer = null;
-let markersLayer = null;
-function drawMap(points,geometry) {
-  if (!window.L) throw new Error("Interactive map library did not load. Check your internet connection and reload the extension.");
-  if (!leafletMap) {
-    leafletMap = L.map("routeMap", { zoomControl: true, scrollWheelZoom: true });
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>'
-    }).addTo(leafletMap);
-    routeLayer = L.layerGroup().addTo(leafletMap);
-    markersLayer = L.layerGroup().addTo(leafletMap);
-  }
-  routeLayer.clearLayers();
-  markersLayer.clearLayers();
-  const latlngs = geometry.coordinates.map(c => [c[1], c[0]]);
-  L.polyline(latlngs, { color:"#49d49a", weight:5, opacity:.95, lineJoin:"round" }).addTo(routeLayer);
-  points.forEach((p,i) => {
-    const color = i === 0 ? "#73b7ff" : i === points.length-1 ? "#f5c46a" : "#49d49a";
-    const marker = L.circleMarker([p.lat,p.lon], {radius:7,color:"#0b1118",weight:2,fillColor:color,fillOpacity:1});
-    marker.bindTooltip((i+1)+". "+p.name, {direction:"top"});
-    marker.addTo(markersLayer);
-  });
-  leafletMap.fitBounds(L.latLngBounds(latlngs), {padding:[24,24]});
-  setTimeout(() => leafletMap.invalidateSize(), 100);
+let mapZoom = 5;
+let mapCenter = [39,-96];
+let currentGeometry = null;
+let currentPoints = [];
+function project(lat, lon, zoom) {
+  const scale = 256 * Math.pow(2, zoom);
+  const sin = Math.sin(lat * Math.PI / 180);
+  return {x:(lon + 180) / 360 * scale, y:(0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * scale};
 }
+function unproject(x,y,zoom) {
+  const scale=256*Math.pow(2,zoom);
+  return {lon:x/scale*360-180,lat:Math.atan(Math.sinh(Math.PI*(1-2*y/scale)))*180/Math.PI};
+}
+function fitMap() {
+  if(!currentGeometry?.coordinates?.length) return;
+  const coords=currentGeometry.coordinates;
+  const lons=coords.map(c=>c[0]),lats=coords.map(c=>c[1]);
+  const midLon=(Math.min(...lons)+Math.max(...lons))/2,midLat=(Math.min(...lats)+Math.max(...lats))/2;
+  mapCenter=[midLat,midLon];
+  const box=$("routeMap").getBoundingClientRect(), width=box.width||400,height=box.height||300;
+  for(let z=12;z>=2;z--){
+    const pts=coords.map(c=>project(c[1],c[0],z));
+    if(Math.max(...pts.map(p=>p.x))-Math.min(...pts.map(p=>p.x)) < width-60 && Math.max(...pts.map(p=>p.y))-Math.min(...pts.map(p=>p.y)) < height-60){mapZoom=z;break;}
+  }
+}
+function renderMap() {
+ const map=$("routeMap"),tiles=$("mapTiles"),svg=$("routeOverlay");
+ if(!map||!tiles||!svg)return;
+ const width=map.clientWidth||400,height=map.clientHeight||300;
+ tiles.replaceChildren();svg.replaceChildren();svg.setAttribute("viewBox",`0 0 ${width} ${height}`);
+ const center=project(mapCenter[0],mapCenter[1],mapZoom);
+ const left=center.x-width/2,top=center.y-height/2;
+ const minTX=Math.floor(left/256),maxTX=Math.floor((left+width)/256),minTY=Math.floor(top/256),maxTY=Math.floor((top+height)/256),n=Math.pow(2,mapZoom);
+ for(let x=minTX;x<=maxTX;x++)for(let y=minTY;y<=maxTY;y++){
+  if(y<0||y>=n)continue;
+  const img=document.createElement("img");img.alt="";img.draggable=false;img.loading="lazy";
+  img.src=`https://tile.openstreetmap.org/${mapZoom}/${((x%n)+n)%n}/${y}.png`;
+  img.style.cssText=`position:absolute;width:256px;height:256px;left:${x*256-left}px;top:${y*256-top}px;max-width:none;`;
+  img.onerror=()=>{img.style.background="#dfe5e8";};tiles.appendChild(img);
+ }
+ if(currentGeometry?.coordinates?.length){
+  const ns="http://www.w3.org/2000/svg";
+  const toXY=c=>{const p=project(c[1],c[0],mapZoom);return [p.x-left,p.y-top];};
+  const line=document.createElementNS(ns,"polyline");line.setAttribute("points",currentGeometry.coordinates.map(c=>toXY(c).join(",")).join(" "));line.setAttribute("fill","none");line.setAttribute("stroke","#13a979");line.setAttribute("stroke-width","5");line.setAttribute("stroke-linecap","round");line.setAttribute("stroke-linejoin","round");line.setAttribute("vector-effect","non-scaling-stroke");svg.appendChild(line);
+  currentPoints.forEach((p,i)=>{const [x,y]=toXY([p.lon,p.lat]);if(x<-15||x>width+15||y<-15||y>height+15)return;const circ=document.createElementNS(ns,"circle");circ.setAttribute("cx",x);circ.setAttribute("cy",y);circ.setAttribute("r","6");circ.setAttribute("fill",i===0?"#73b7ff":i===currentPoints.length-1?"#f5c46a":"#49d49a");circ.setAttribute("stroke","#fff");circ.setAttribute("stroke-width","2");svg.appendChild(circ);});
+ }
+}
+function drawMap(points,geometry) {
+ currentPoints=points;currentGeometry=geometry;fitMap();renderMap();
+}
+$("zoomIn").addEventListener("click",()=>{mapZoom=Math.min(18,mapZoom+1);renderMap()});
+$("zoomOut").addEventListener("click",()=>{mapZoom=Math.max(2,mapZoom-1);renderMap()});
+$("fitRoute").addEventListener("click",()=>{fitMap();renderMap()});
+let drag=null;
+$("routeMap").addEventListener("pointerdown",e=>{if(e.target.closest(".map-controls,.map-attribution"))return;drag={x:e.clientX,y:e.clientY,center:project(mapCenter[0],mapCenter[1],mapZoom)};$("routeMap").setPointerCapture(e.pointerId)});
+$("routeMap").addEventListener("pointermove",e=>{if(!drag)return;const p=unproject(drag.center.x-(e.clientX-drag.x),drag.center.y-(e.clientY-drag.y),mapZoom);mapCenter=[p.lat,p.lon];renderMap()});
+$("routeMap").addEventListener("pointerup",()=>drag=null);
+$("routeMap").addEventListener("pointercancel",()=>drag=null);
+$("routeMap").addEventListener("wheel",e=>{e.preventDefault();mapZoom=Math.max(2,Math.min(18,mapZoom+(e.deltaY<0?1:-1)));renderMap()},{passive:false});
+window.addEventListener("resize",()=>{if(currentGeometry)renderMap()});
+
 function updateRPM(){const rate=Number($("rate").value)||0;const miles=Number($("rpmMiles").value)||0;$("rpm").textContent="$"+(miles>0?rate/miles:0).toFixed(2)+" / mi";}
 $("rate").addEventListener("input",updateRPM);$("rpmMiles").addEventListener("input",updateRPM);
 $("routeForm").addEventListener("submit",async e=>{
