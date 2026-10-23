@@ -1,16 +1,15 @@
 {
   "manifest_version": 3,
   "name": "CargoSync Route Planner",
-  "version": "1.2.0",
-  "description": "A functional route planner and RPM calculator in Chrome's side panel.",
+  "version": "1.3.0",
+  "description": "A route planner with location autocomplete and RPM calculator in Chrome's side panel.",
   "permissions": [
     "sidePanel"
   ],
   "host_permissions": [
-    "https://nominatim.openstreetmap.org/*",
+    "https://photon.komoot.io/*",
     "https://router.project-osrm.org/*",
-    "https://*.tile.openstreetmap.org/*",
-    "https://unpkg.com/*"
+    "https://*.tile.openstreetmap.org/*"
   ],
   "background": {
     "service_worker": "background.js"
