@@ -931,6 +931,24 @@ def put_workspace_state(key: str, body: StateBody, user: sqlite3.Row = Depends(g
                     raise HTTPException(status_code=400, detail="A load field is too long")
                 if l.get("puDate") and l.get("delDate") and str(l["delDate"]) < str(l["puDate"]):
                     raise HTTPException(status_code=400, detail="Delivery cannot be before pickup")
+                amounts = l.get("accessorialAmounts", {})
+                if amounts is not None and not isinstance(amounts, dict):
+                    raise HTTPException(status_code=400, detail="Accessorial amounts must be an object")
+                for charge in ("tonu", "detention", "layover"):
+                    raw_amount = (amounts or {}).get(charge, 0)
+                    try:
+                        amount = float(raw_amount or 0)
+                    except (TypeError, ValueError):
+                        raise HTTPException(status_code=400, detail=f"Invalid {charge.upper()} amount")
+                    if not math.isfinite(amount) or amount < 0 or amount > 1_000_000:
+                        raise HTTPException(status_code=400, detail=f"{charge.upper()} amount must be between $0 and $1,000,000")
+                if l.get("loadedMiles") is not None:
+                    try:
+                        saved_miles = float(l.get("loadedMiles") or 0)
+                    except (TypeError, ValueError):
+                        raise HTTPException(status_code=400, detail="Invalid loaded mileage")
+                    if not math.isfinite(saved_miles) or saved_miles < 0 or saved_miles > 20_000:
+                        raise HTTPException(status_code=400, detail="Loaded mileage must be between 0 and 20,000")
         next_version = version + 1
         now = iso()
         serialized = json.dumps(body.value, ensure_ascii=False, separators=(",", ":"))
@@ -962,7 +980,7 @@ def finance_summary(user: sqlite3.Row = Depends(get_current_user)):
         except (TypeError, ValueError):
             return 0.0
 
-    mileage_budget = [80]
+    mileage_budget = [20]
     mileage_memo: dict[str, float] = {}
 
     def resolve_loaded_miles(load: dict) -> float:
