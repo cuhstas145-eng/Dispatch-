@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CargoSync Route Planner</title><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><link rel="stylesheet" href="ui.css"></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CargoSync Route Planner</title><link rel="stylesheet" href="ui.css"></head>
 <body class="planner">
 <header class="planner-head"><div class="brand compact"><div class="mark">CS</div><div><h1>CargoSync</h1><p>Route Planner · Extension</p></div></div><button id="openWorkspace" class="text-button">Workspace ↗</button></header>
 <main class="planner-main">
@@ -15,7 +15,7 @@
 <div id="message" class="message" role="status">Ready to plan.</div>
 <section id="results" class="results hidden">
 <div class="stats"><div><span>Total miles</span><strong id="miles">—</strong></div><div><span>Drive estimate</span><strong id="duration">—</strong></div></div>
-<div class="map-wrap"><div id="routeMap" role="region" aria-label="Interactive route map"></div></div>
+<div class="map-wrap"><div id="routeMap" role="region" aria-label="Interactive OpenStreetMap"><div class="map-controls"><button type="button" id="zoomIn" aria-label="Zoom in">+</button><button type="button" id="zoomOut" aria-label="Zoom out">−</button><button type="button" id="fitRoute" aria-label="Fit route">Fit</button></div><div id="mapTiles"></div><svg id="routeOverlay" aria-hidden="true"></svg><div class="map-attribution">© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors</div></div></div>
 <h2>Route legs</h2><ol id="legs" class="legs"></ol>
 <section class="rpm-box"><div class="section-head"><div><h2>Quick RPM Calculator</h2><p>Estimate rate per mile using the calculated route distance.</p></div><span class="live">LIVE</span></div>
 <div class="field"><label for="rate">All-in rate ($)</label><input id="rate" type="number" min="0" step="0.01" placeholder="e.g. 1850"></div>
@@ -24,4 +24,4 @@
 </section>
 </section>
 <p class="fineprint">Route mileage is a planning estimate, not truck-legal routing. Verify restrictions, tolls, and final directions before dispatch. Geocoding/routing requires internet access.</p>
-</main><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="sidepanel.js"></script></body></html>
+</main><script src="sidepanel.js"></script></body></html>
