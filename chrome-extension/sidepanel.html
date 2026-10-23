@@ -1,26 +1,27 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CargoSync Side Panel</title>
-  <link rel="stylesheet" href="ui.css">
-</head>
-<body class="panel">
-  <header class="panel-head">
-    <div class="brand compact"><div class="mark">CS</div><div><h1>CargoSync</h1><p>Dispatch workspace</p></div></div>
-  </header>
-  <main class="panel-main">
-    <div class="status-card">
-      <span class="status-dot"></span>
-      <div><strong>Open your workspace</strong><p>Launch CargoSync in a full browser tab for the complete map, route tools and load tables.</p></div>
-    </div>
-    <button id="openRoute" class="primary action-card"><span class="action-icon">↗</span><span class="action-copy"><strong>Route Planner</strong><small>Map, pickup, stops and delivery</small></span><span>→</span></button>
-    <button id="openSchedule" class="action-card"><span class="action-icon">▦</span><span class="action-copy"><strong>Schedule & Loads</strong><small>Dispatch schedule and load tables</small></span><span>→</span></button>
-    <button id="openQuickRpm" class="action-card"><span class="action-icon">↗</span><span class="action-copy"><strong>Quick RPM Calculator</strong><small>Open workspace to calculate RPM</small></span><span>→</span></button>
-    <div class="panel-note"><strong>Why open a tab?</strong><p>The website does not allow its page to display inside this side panel. Opening it directly avoids the blank embedded frame and keeps your existing login and saved data on Render.</p></div>
-    <button id="openApp" class="secondary">Open full CargoSync workspace ↗</button>
-  </main>
-  <script src="sidepanel.js"></script>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CargoSync Route Planner</title><link rel="stylesheet" href="ui.css"></head>
+<body class="planner">
+<header class="planner-head"><div class="brand compact"><div class="mark">CS</div><div><h1>CargoSync</h1><p>Route Planner · Extension</p></div></div><button id="openWorkspace" class="text-button">Workspace ↗</button></header>
+<main class="planner-main">
+<div class="intro"><strong>Plan a route</strong><p>Enter locations, add stops, calculate route mileage and estimate RPM. Routes use OpenStreetMap geocoding and OSRM routing.</p></div>
+<form id="routeForm">
+<div class="field"><label for="truck">Truck location / start</label><input id="truck" placeholder="e.g. Chicago, IL" required autocomplete="street-address"></div>
+<div class="field"><label for="pickup">Pickup</label><input id="pickup" placeholder="Pickup city or address" required autocomplete="street-address"></div>
+<div id="stops"></div><button type="button" id="addStop" class="secondary wide">＋ Add stop</button>
+<div class="field"><label for="delivery">Delivery</label><input id="delivery" placeholder="Delivery city or address" required autocomplete="street-address"></div>
+<div class="field"><label for="detour">Additional miles (optional)</label><input id="detour" type="number" min="0" step="0.1" value="0"></div>
+<div class="actions"><button type="submit" id="calculate" class="primary wide">Calculate route</button></div>
+</form>
+<div id="message" class="message" role="status">Ready to plan.</div>
+<section id="results" class="results hidden">
+<div class="stats"><div><span>Total miles</span><strong id="miles">—</strong></div><div><span>Drive estimate</span><strong id="duration">—</strong></div></div>
+<div class="map-wrap"><svg id="routeMap" viewBox="0 0 320 180" role="img" aria-label="Route overview"></svg></div>
+<h2>Route legs</h2><ol id="legs" class="legs"></ol>
+<section class="rpm-box"><div class="section-head"><div><h2>Quick RPM Calculator</h2><p>Estimate rate per mile using the calculated route distance.</p></div><span class="live">LIVE</span></div>
+<div class="field"><label for="rate">All-in rate ($)</label><input id="rate" type="number" min="0" step="0.01" placeholder="e.g. 1850"></div>
+<div class="field"><label for="rpmMiles">Billable miles</label><input id="rpmMiles" type="number" min="0" step="0.1"></div>
+<div class="rpm-output"><span>All-in RPM</span><strong id="rpm">$0.00 / mi</strong></div>
+</section>
+</section>
+<p class="fineprint">Route mileage is a planning estimate, not truck-legal routing. Verify restrictions, tolls, and final directions before dispatch. Geocoding/routing requires internet access.</p>
+</main><script src="sidepanel.js"></script></body></html>
