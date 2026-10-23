@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "CargoSync Route Planner",
+  "version": "1.0.0",
+  "description": "Quick access to CargoSync Route Planner and Quick RPM Calculator.",
+  "permissions": [
+    "sidePanel"
+  ],
+  "action": {
+    "default_title": "CargoSync Route Planner",
+    "default_popup": "popup.html"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  }
+}
