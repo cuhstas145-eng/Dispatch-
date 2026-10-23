@@ -32,18 +32,32 @@ async function routeBetween(points) {
   return data.routes[0];
 }
 function fmtDuration(seconds){const h=Math.round(seconds/3600);const d=Math.floor(h/24);return d?d+"d "+(h%24)+"h":h+"h";}
+let leafletMap = null;
+let routeLayer = null;
+let markersLayer = null;
 function drawMap(points,geometry) {
-  const svg=$("routeMap"); svg.replaceChildren();
-  const NS="http://www.w3.org/2000/svg";
-  const all=geometry.coordinates;
-  const lons=all.map(c=>c[0]), lats=all.map(c=>c[1]);
-  let minX=Math.min(...lons),maxX=Math.max(...lons),minY=Math.min(...lats),maxY=Math.max(...lats);
-  if(maxX-minX<.01){minX-=.01;maxX+=.01;} if(maxY-minY<.01){minY-=.01;maxY+=.01;}
-  const pad=18, w=320-2*pad,h=180-2*pad;
-  const xy=c=>[pad+(c[0]-minX)/(maxX-minX)*w,180-pad-(c[1]-minY)/(maxY-minY)*h];
-  for(let i=0;i<5;i++){const line=document.createElementNS(NS,"path");const y=pad+i*h/4;line.setAttribute("d","M "+pad+" "+y+" H "+(320-pad));line.setAttribute("stroke","#263747");line.setAttribute("stroke-width","1");svg.appendChild(line);}
-  const path=document.createElementNS(NS,"polyline");path.setAttribute("points",all.map(c=>xy(c).join(",")).join(" "));path.setAttribute("fill","none");path.setAttribute("stroke","#49d49a");path.setAttribute("stroke-width","3");path.setAttribute("stroke-linecap","round");path.setAttribute("stroke-linejoin","round");svg.appendChild(path);
-  points.forEach((p,i)=>{const [x,y]=xy([p.lon,p.lat]);const circ=document.createElementNS(NS,"circle");circ.setAttribute("cx",x);circ.setAttribute("cy",y);circ.setAttribute("r",5);circ.setAttribute("fill",i===0?"#73b7ff":i===points.length-1?"#f5c46a":"#49d49a");circ.setAttribute("stroke","#0b1118");circ.setAttribute("stroke-width","2");svg.appendChild(circ);const t=document.createElementNS(NS,"text");t.setAttribute("x",x+7);t.setAttribute("y",y-7);t.setAttribute("fill","#e8edf5");t.setAttribute("font-size","9");t.textContent=String(i+1);svg.appendChild(t);});
+  if (!window.L) throw new Error("Interactive map library did not load. Check your internet connection and reload the extension.");
+  if (!leafletMap) {
+    leafletMap = L.map("routeMap", { zoomControl: true, scrollWheelZoom: true });
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>'
+    }).addTo(leafletMap);
+    routeLayer = L.layerGroup().addTo(leafletMap);
+    markersLayer = L.layerGroup().addTo(leafletMap);
+  }
+  routeLayer.clearLayers();
+  markersLayer.clearLayers();
+  const latlngs = geometry.coordinates.map(c => [c[1], c[0]]);
+  L.polyline(latlngs, { color:"#49d49a", weight:5, opacity:.95, lineJoin:"round" }).addTo(routeLayer);
+  points.forEach((p,i) => {
+    const color = i === 0 ? "#73b7ff" : i === points.length-1 ? "#f5c46a" : "#49d49a";
+    const marker = L.circleMarker([p.lat,p.lon], {radius:7,color:"#0b1118",weight:2,fillColor:color,fillOpacity:1});
+    marker.bindTooltip((i+1)+". "+p.name, {direction:"top"});
+    marker.addTo(markersLayer);
+  });
+  leafletMap.fitBounds(L.latLngBounds(latlngs), {padding:[24,24]});
+  setTimeout(() => leafletMap.invalidateSize(), 100);
 }
 function updateRPM(){const rate=Number($("rate").value)||0;const miles=Number($("rpmMiles").value)||0;$("rpm").textContent="$"+(miles>0?rate/miles:0).toFixed(2)+" / mi";}
 $("rate").addEventListener("input",updateRPM);$("rpmMiles").addEventListener("input",updateRPM);
