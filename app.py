@@ -202,6 +202,12 @@ def init_db() -> None:
             UNIQUE(load_id, doc_type)
         );
         CREATE INDEX IF NOT EXISTS idx_accessorial_documents_load ON accessorial_documents(load_id);
+        CREATE TABLE IF NOT EXISTS finance_commissions (
+            dispatcher_id TEXT PRIMARY KEY,
+            commission_percent REAL NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT
+        );
         CREATE TABLE IF NOT EXISTS audit_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             at TEXT NOT NULL,
@@ -435,6 +441,10 @@ class DriverPatch(BaseModel):
 class StateBody(BaseModel):
     value: Any
     base_version: int | None = None
+
+
+class CommissionBody(BaseModel):
+    percent: float = Field(ge=0, le=100)
 
 
 class ImportBody(BaseModel):
@@ -937,6 +947,145 @@ def put_workspace_state(key: str, body: StateBody, user: sqlite3.Row = Depends(g
                         except OSError: pass
                     c.execute("DELETE FROM documents WHERE load_id=?", (removed_id,))
         return {"ok": True, "key": key, "version": next_version, "updatedAt": now}
+
+
+@app.get("/api/finance/summary")
+def finance_summary(user: sqlite3.Row = Depends(get_current_user)):
+    role = effective_role(user)
+    if role not in {"admin", "dispatcher"}:
+        raise HTTPException(status_code=403, detail="Finance data is available only to administrators and dispatchers")
+
+    def money_num(value: Any) -> float:
+        try:
+            number = float(value or 0)
+            return number if math.isfinite(number) and number >= 0 else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    def summarize(load_list: list[dict], percent: float = 0.0) -> dict[str, Any]:
+        total_rate = tonu_total = detention_total = layover_total = 0.0
+        rpm_rate = rpm_miles = 0.0
+        missing_miles = load_count = 0
+        for load in load_list:
+            if not isinstance(load, dict):
+                continue
+            load_count += 1
+            rate = money_num(load.get("rate"))
+            total_rate += rate
+            amounts = load.get("accessorialAmounts") if isinstance(load.get("accessorialAmounts"), dict) else {}
+            tonu = money_num(amounts.get("tonu", load.get("tonuAmount", 0)))
+            detention = money_num(amounts.get("detention", load.get("detentionAmount", 0)))
+            layover = money_num(amounts.get("layover", load.get("layoverAmount", 0)))
+            tonu_total += tonu
+            detention_total += detention
+            layover_total += layover
+
+            accessorials = {str(value).strip().lower() for value in (load.get("accessorials") or [])}
+            is_tonu = "tonu" in accessorials or bool(load.get("tonu"))
+            if not is_tonu:
+                miles = money_num(load.get("loadedMiles") or load.get("routeMiles") or load.get("miles"))
+                if miles > 0:
+                    rpm_rate += rate
+                    rpm_miles += miles
+                elif rate > 0:
+                    missing_miles += 1
+
+        accessorial_total = tonu_total + detention_total + layover_total
+        gross = total_rate + accessorial_total
+        commission = min(100.0, max(0.0, float(percent or 0)))
+        return {
+            "loadCount": load_count,
+            "freightRevenue": round(total_rate, 2),
+            "tonuRevenue": round(tonu_total, 2),
+            "detentionRevenue": round(detention_total, 2),
+            "layoverRevenue": round(layover_total, 2),
+            "accessorialRevenue": round(accessorial_total, 2),
+            "totalRevenue": round(gross, 2),
+            "commissionPercent": commission,
+            "earnings": round(gross * commission / 100.0, 2),
+            "rpmRevenue": round(rpm_rate, 2),
+            "rpmMiles": round(rpm_miles, 1),
+            "rpm": round(rpm_rate / rpm_miles, 2) if rpm_miles > 0 else None,
+            "loadsWithoutMiles": missing_miles,
+        }
+
+    with db() as c:
+        loads, _ = read_state(c, "cargosync_schedule_v2")
+        drivers, _ = read_state(c, "cargosync_drivers_v1")
+        commissions = {
+            row["dispatcher_id"]: float(row["commission_percent"] or 0)
+            for row in c.execute("SELECT dispatcher_id, commission_percent FROM finance_commissions").fetchall()
+        }
+        if role == "dispatcher":
+            assignments = {
+                (str(driver.get("name", "")), str(driver.get("truck", ""))): driver.get("dispatcherId")
+                for driver in drivers if isinstance(driver, dict)
+            }
+            own_loads = []
+            for load in loads:
+                if not isinstance(load, dict):
+                    continue
+                owner_id = assignments.get((str(load.get("driver", "")), str(load.get("truck", "")))) or load.get("dispatcherId")
+                if owner_id == user["id"]:
+                    own_loads.append(load)
+            own_commission = commissions.get(user["id"], 0.0)
+            return {
+                "scope": "dispatcher",
+                "dispatcher": {
+                    "id": user["id"],
+                    "name": user["name"],
+                    **summarize(own_loads, own_commission),
+                },
+            }
+
+        users = c.execute(
+            "SELECT id, name, username FROM users WHERE role='dispatcher' AND active=1 ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+        assignment_map = {
+            (str(driver.get("name", "")), str(driver.get("truck", ""))): driver.get("dispatcherId")
+            for driver in drivers if isinstance(driver, dict)
+        }
+        by_dispatcher = {row["id"]: [] for row in users}
+        for load in loads:
+            if not isinstance(load, dict):
+                continue
+            dispatcher_id = assignment_map.get((str(load.get("driver", "")), str(load.get("truck", "")))) or load.get("dispatcherId")
+            if dispatcher_id in by_dispatcher:
+                by_dispatcher[dispatcher_id].append(load)
+        dispatchers = []
+        for row in users:
+            percent = commissions.get(row["id"], 0.0)
+            dispatchers.append({
+                "id": row["id"],
+                "name": row["name"],
+                "username": row["username"],
+                **summarize(by_dispatcher[row["id"]], percent),
+            })
+        company = summarize([load for load in loads if isinstance(load, dict)], 0.0)
+        company["commissionPayouts"] = round(sum(item["earnings"] for item in dispatchers), 2)
+        company["unassignedLoads"] = sum(
+            1 for load in loads if isinstance(load, dict)
+            and (assignment_map.get((str(load.get("driver", "")), str(load.get("truck", "")))) or load.get("dispatcherId")) not in by_dispatcher
+        )
+        return {"scope": "company", "company": company, "dispatchers": dispatchers}
+
+
+@app.put("/api/finance/commissions/{dispatcher_id}")
+def update_dispatcher_commission(dispatcher_id: str, body: CommissionBody, user: sqlite3.Row = Depends(admin_user)):
+    with db() as c:
+        target = c.execute(
+            "SELECT id FROM users WHERE id=? AND role='dispatcher' AND active=1", (dispatcher_id,)
+        ).fetchone()
+        if not target:
+            raise HTTPException(status_code=404, detail="Active dispatcher account not found")
+        now = iso()
+        c.execute(
+            "INSERT INTO finance_commissions(dispatcher_id,commission_percent,updated_at,updated_by) VALUES(?,?,?,?) "
+            "ON CONFLICT(dispatcher_id) DO UPDATE SET commission_percent=excluded.commission_percent,updated_at=excluded.updated_at,updated_by=excluded.updated_by",
+            (dispatcher_id, float(body.percent), now, user["username"]),
+        )
+        audit(c, user, "finance_commission_updated", "dispatcher", dispatcher_id, {"percent": float(body.percent)})
+    return {"ok": True, "dispatcherId": dispatcher_id, "percent": float(body.percent), "updatedAt": now}
 
 
 @app.get("/api/drivers")
