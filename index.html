@@ -235,6 +235,8 @@ body.load-modal-open #routeMap .leaflet-marker-pane{display:none!important}
 @media(prefers-reduced-motion:reduce){.schedule-shell,.load-modal.open,.drag-preview{animation:none!important}}
 </style>
 <style id="cargoScheduleFixes">
+/* Remove the legacy manual Load Desk and its duplicate summary cards. Keep hidden DOM IDs for compatibility with existing handlers. */
+#loadDeskContent,#routeStats{display:none!important}
 .city-autocomplete-host{position:relative!important;min-width:0}
 .city-suggestions{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:5000;max-height:240px;overflow-y:auto;border:1px solid #456176;border-radius:10px;background:#101e2b;box-shadow:0 12px 34px #000b;padding:5px}
 .city-suggestions[hidden]{display:none!important}
