@@ -8,15 +8,19 @@
 </head>
 <body class="panel">
   <header class="panel-head">
-    <div class="brand compact"><div class="mark">CS</div><div><h1>CargoSync</h1><p>Route Planner</p></div></div>
-    <button id="openFull" class="primary small">Open full app ↗</button>
+    <div class="brand compact"><div class="mark">CS</div><div><h1>CargoSync</h1><p>Dispatch workspace</p></div></div>
   </header>
-  <div class="notice">
-    <strong>Quick access</strong>
-    <p>The full planner includes the map, Route Planner, Quick RPM Calculator, loads and existing calculations.</p>
-    <p>If the embedded view asks you to sign in repeatedly or does not load, open the full app. Browser privacy settings can restrict sign-in inside embedded pages.</p>
-  </div>
-  <iframe id="planner" title="CargoSync Route Planner" src="https://cargosync-dispatch.onrender.com/" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+  <main class="panel-main">
+    <div class="status-card">
+      <span class="status-dot"></span>
+      <div><strong>Open your workspace</strong><p>Launch CargoSync in a full browser tab for the complete map, route tools and load tables.</p></div>
+    </div>
+    <button id="openRoute" class="primary action-card"><span class="action-icon">↗</span><span class="action-copy"><strong>Route Planner</strong><small>Map, pickup, stops and delivery</small></span><span>→</span></button>
+    <button id="openSchedule" class="action-card"><span class="action-icon">▦</span><span class="action-copy"><strong>Schedule & Loads</strong><small>Dispatch schedule and load tables</small></span><span>→</span></button>
+    <button id="openQuickRpm" class="action-card"><span class="action-icon">↗</span><span class="action-copy"><strong>Quick RPM Calculator</strong><small>Open workspace to calculate RPM</small></span><span>→</span></button>
+    <div class="panel-note"><strong>Why open a tab?</strong><p>The website does not allow its page to display inside this side panel. Opening it directly avoids the blank embedded frame and keeps your existing login and saved data on Render.</p></div>
+    <button id="openApp" class="secondary">Open full CargoSync workspace ↗</button>
+  </main>
   <script src="sidepanel.js"></script>
 </body>
 </html>
