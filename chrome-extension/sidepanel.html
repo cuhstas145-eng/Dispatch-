@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CargoSync Side Panel</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="panel">
+  <header class="panel-head">
+    <div class="brand compact"><div class="mark">CS</div><div><h1>CargoSync</h1><p>Route Planner</p></div></div>
+    <button id="openFull" class="primary small">Open full app ↗</button>
+  </header>
+  <div class="notice">
+    <strong>Quick access</strong>
+    <p>The full planner includes the map, Route Planner, Quick RPM Calculator, loads and existing calculations.</p>
+    <p>If the embedded view asks you to sign in repeatedly or does not load, open the full app. Browser privacy settings can restrict sign-in inside embedded pages.</p>
+  </div>
+  <iframe id="planner" title="CargoSync Route Planner" src="https://cargosync-dispatch.onrender.com/" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
