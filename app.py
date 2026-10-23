@@ -962,6 +962,44 @@ def finance_summary(user: sqlite3.Row = Depends(get_current_user)):
         except (TypeError, ValueError):
             return 0.0
 
+    mileage_budget = [80]
+    mileage_memo: dict[str, float] = {}
+
+    def resolve_loaded_miles(load: dict) -> float:
+        direct = money_num(load.get("loadedMiles") or load.get("routeMiles") or load.get("miles"))
+        if direct > 0:
+            return direct
+        pu, delivery = str(load.get("pu") or "").strip(), str(load.get("del") or "").strip()
+        if not pu or not delivery:
+            return 0.0
+        cache_key = _normal_place(pu) + "|" + _normal_place(delivery)
+        if cache_key in mileage_memo:
+            return mileage_memo[cache_key]
+        stored = _map_cache_get("finance-mileage:" + cache_key)
+        if stored is not None:
+            value = money_num(stored)
+            mileage_memo[cache_key] = value
+            load["loadedMiles"] = value
+            return value
+        if mileage_budget[0] <= 0:
+            return 0.0
+        mileage_budget[0] -= 1
+        try:
+            origin, destination = _resolve_place(pu), _resolve_place(delivery)
+            route = map_route(origin["lat"], origin["lon"], destination["lat"], destination["lon"], user)
+            value = money_num(route.get("miles"))
+            if value > 0:
+                value = round(value, 1)
+                _map_cache_set("finance-mileage:" + cache_key, value)
+                load["loadedMiles"] = value
+                load["loadedMilesPu"] = _normal_place(pu)
+                load["loadedMilesDel"] = _normal_place(delivery)
+            mileage_memo[cache_key] = value
+            return value
+        except Exception:
+            mileage_memo[cache_key] = 0.0
+            return 0.0
+
     def summarize(load_list: list[dict], percent: float = 0.0) -> dict[str, Any]:
         total_rate = tonu_total = detention_total = layover_total = 0.0
         rpm_rate = rpm_miles = 0.0
@@ -983,7 +1021,7 @@ def finance_summary(user: sqlite3.Row = Depends(get_current_user)):
             accessorials = {str(value).strip().lower() for value in (load.get("accessorials") or [])}
             is_tonu = "tonu" in accessorials or bool(load.get("tonu"))
             if not is_tonu:
-                miles = money_num(load.get("loadedMiles") or load.get("routeMiles") or load.get("miles"))
+                miles = resolve_loaded_miles(load) if rate > 0 else 0.0
                 if miles > 0:
                     rpm_rate += rate
                     rpm_miles += miles
@@ -1068,6 +1106,25 @@ def finance_summary(user: sqlite3.Row = Depends(get_current_user)):
             and (assignment_map.get((str(load.get("driver", "")), str(load.get("truck", "")))) or load.get("dispatcherId")) not in by_dispatcher
         )
         return {"scope": "company", "company": company, "dispatchers": dispatchers}
+
+
+@app.get("/api/finance/commissions")
+def list_finance_commissions(user: sqlite3.Row = Depends(admin_user)):
+    with db() as c:
+        dispatchers = c.execute(
+            "SELECT id, name, username FROM users WHERE role='dispatcher' AND active=1 ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+        values = {
+            row["dispatcher_id"]: float(row["commission_percent"] or 0)
+            for row in c.execute("SELECT dispatcher_id, commission_percent FROM finance_commissions").fetchall()
+        }
+    return {
+        "dispatchers": [
+            {"id": row["id"], "name": row["name"], "username": row["username"],
+             "commissionPercent": values.get(row["id"], 0.0)}
+            for row in dispatchers
+        ]
+    }
 
 
 @app.put("/api/finance/commissions/{dispatcher_id}")
