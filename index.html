@@ -360,7 +360,7 @@ body.load-modal-open #routeMap .leaflet-marker-pane{display:none!important}
     <div class="tablewrap"><table style="min-width:0"><thead><tr><th style="width:34%">Field</th><th>FMCSA value</th></tr></thead><tbody id="mcLookupRows"></tbody></table></div>
     <div class="muted" id="mcLookupMeta" style="margin-top:10px"></div>
   </div>
-  <div class="foot">Data source: FMCSA QCMobile API. Results depend on official API availability and may not include every record. Verify time-sensitive authority and insurance decisions against the official FMCSA record.</div>
+  <div class="foot">Data source: official FMCSA SAFER Company Snapshot. If automated lookup is blocked, open the official FMCSA record directly and verify authority and insurance there.</div>
 </section>
 
 
@@ -787,9 +787,9 @@ function financeMoney(value){return '$'+Number(value||0).toLocaleString('en-US',
          th.textContent=key.replaceAll('/',' › ');td.textContent=value;tr.append(th,td);rowsEl.append(tr);
        });
        if(!rowsEl.children.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=2;td.textContent='FMCSA responded, but no displayable carrier fields were returned.';tr.append(td);rowsEl.append(tr)}
-       metaEl.textContent='Source: FMCSA QCMobile API · Checked '+new Date(data.queriedAt||Date.now()).toLocaleString()+' · Confirm official status before dispatch.';
+       metaEl.textContent='Source: '+(data.source||'FMCSA SAFER')+' · Checked '+new Date(data.queriedAt||Date.now()).toLocaleString()+' · Confirm official status before dispatch.';
        resultEl.classList.remove('hidden');showMcStatus('Lookup complete','Available FMCSA records are displayed below.');
-     } catch(err) { showMcStatus('Could not complete lookup',err.message+' Check that the FMCSA WebKey is configured and the API is available.',true); }
+     } catch(err) { const msg=String(err && err.message || 'Unknown lookup error'); if(msg.includes('HTTP 403')) { showMcStatus('FMCSA blocked automated lookup','This is not a WebKey error. FMCSA SAFER denied the server request (HTTP 403). You can open the official snapshot search in a new tab; results may need to be checked there.',true); const a=document.createElement('a'); a.href='https://safer.fmcsa.dot.gov/CompanySnapshot.aspx?query_param=MC_MX&query_string='+encodeURIComponent(number)+'&query_type=queryCarrierSnapshot&searchtype=ANY'; a.target='_blank'; a.rel='noopener noreferrer'; a.textContent='Open official FMCSA SAFER record ↗'; a.style.display='inline-block'; a.style.marginTop='8px'; a.style.color='var(--text)'; a.style.fontWeight='700'; statusEl.append(a); } else { showMcStatus('Could not complete lookup',msg,true); } }
      finally { lookupBtn.disabled=false;lookupBtn.textContent='Check carrier'; }
    });
    $('mcClearButton').addEventListener('click',()=>{$('mcLookupNumber').value='';resultEl.classList.add('hidden');summaryEl.replaceChildren();rowsEl.replaceChildren();showMcStatus('Ready to check','Enter an MC/MX number. Results will be displayed below without redirecting you away from CargoSync.');});
