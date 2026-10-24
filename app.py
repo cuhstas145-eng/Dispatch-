@@ -404,7 +404,7 @@ def _safer_snapshot(mc_number: str) -> dict[str, Any]:
         "query_type": "queryCarrierSnapshot",
         "searchtype": "ANY",
     })
-    url = "https://safer.fmcsa.dot.gov/query.asp?" + params
+    url = "https://safer.fmcsa.dot.gov/CompanySnapshot.aspx?" + params
     req = urllib.request.Request(
         url,
         headers={
@@ -417,6 +417,8 @@ def _safer_snapshot(mc_number: str) -> dict[str, Any]:
             page = resp.read(3_000_000).decode("utf-8", errors="replace")
             final_url = resp.geturl()
     except urllib.error.HTTPError as exc:
+        if exc.code == 403:
+            raise HTTPException(status_code=502, detail="FMCSA SAFER blocked the automated server request (HTTP 403). This is not a WebKey error. Use the official FMCSA SAFER snapshot link in the checker, or use the QCMobile API with a valid WebKey.")
         raise HTTPException(status_code=502, detail=f"Official FMCSA SAFER site returned HTTP {exc.code}.")
     except (urllib.error.URLError, TimeoutError) as exc:
         raise HTTPException(status_code=502, detail="Could not reach the official FMCSA SAFER site. Try again later.")
