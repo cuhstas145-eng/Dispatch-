@@ -12,7 +12,9 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
+import urllib.error
+import urllib.request
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError
@@ -314,6 +316,84 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api/") or request.url.path == "/" else "no-cache"
     return response
+
+
+
+@app.get("/api/fmcsa/mc/{mc_number}")
+def fmcsa_mc_lookup(mc_number: str, user: sqlite3.Row = Depends(get_current_user)):
+    """Look up an MC/MX docket number using the official FMCSA QCMobile API."""
+    import re
+    from datetime import datetime, timezone
+
+    docket = re.sub(r"[^0-9]", "", mc_number or "")
+    if not docket or len(docket) > 10:
+        raise HTTPException(status_code=400, detail="Enter a valid numeric MC/MX number.")
+    web_key = os.getenv("FMCSA_WEBKEY", "").strip()
+    if not web_key:
+        raise HTTPException(status_code=503, detail="FMCSA_WEBKEY is not configured on the CargoSync server. Add a free FMCSA QCMobile WebKey to the local server environment.")
+    
+    def get_json(path: str):
+        url = "https://mobile.fmcsa.dot.gov/qc/services/" + path.lstrip("/") + "?" + urlencode({"webKey": web_key})
+        req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "CargoSync-MC-Checker/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                payload = resp.read(2_000_000).decode("utf-8", errors="replace")
+            return json.loads(payload)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise HTTPException(status_code=404, detail="No FMCSA record was found for this MC/MX number.")
+            if exc.code in (401, 403):
+                raise HTTPException(status_code=502, detail="FMCSA rejected the WebKey. Check FMCSA_WEBKEY configuration.")
+            raise HTTPException(status_code=502, detail=f"FMCSA API returned HTTP {exc.code}.")
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise HTTPException(status_code=502, detail="Could not reach the FMCSA API. Please try again later.")
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502, detail="FMCSA returned a non-JSON response.")
+
+    docket_data = get_json(f"carriers/docket-number/{docket}")
+    def find_dot(value):
+        if isinstance(value, dict):
+            for key in ("dotNumber", "dot_number", "usdotNumber", "USDOTNumber"):
+                candidate = value.get(key)
+                if candidate is not None and str(candidate).isdigit():
+                    return str(candidate)
+            for child in value.values():
+                found = find_dot(child)
+                if found: return found
+        elif isinstance(value, list):
+            for child in value:
+                found = find_dot(child)
+                if found: return found
+        return None
+    dot = find_dot(docket_data)
+    if not dot:
+        raise HTTPException(status_code=404, detail="FMCSA did not return a USDOT match for this MC/MX number.")
+    records = {"docketLookup": docket_data}
+    for name, endpoint in (
+        ("basics", f"carriers/{dot}/basics"),
+        ("authority", f"carriers/{dot}/authority"),
+        ("insurance", f"carriers/{dot}/insurance"),
+        ("docketNumbers", f"carriers/{dot}/docket-numbers"),
+    ):
+        try:
+            records[name] = get_json(endpoint)
+        except HTTPException as exc:
+            # Keep the usable sections if one optional endpoint is unavailable.
+            records[name] = {"unavailable": exc.detail}
+    def find_carrier(value):
+        if isinstance(value, dict):
+            if any(k in value for k in ("legalName", "dotNumber", "dbaName", "carrierOperation")):
+                return value
+            for child in value.values():
+                found = find_carrier(child)
+                if found: return found
+        elif isinstance(value, list):
+            for child in value:
+                found = find_carrier(child)
+                if found: return found
+        return {}
+    carrier = find_carrier(records.get("basics", {})) or find_carrier(docket_data)
+    return {"carrier": carrier, "records": records, "queriedAt": datetime.now(timezone.utc).isoformat(), "source": "FMCSA QCMobile API"}
 
 
 @app.get("/health")
