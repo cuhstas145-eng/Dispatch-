@@ -355,82 +355,147 @@ async def security_headers(request: Request, call_next):
     return response
 
 
+class _SaferHTMLParser(__import__("html.parser", fromlist=["HTMLParser"]).HTMLParser):
+    """Extract visible table rows from the public FMCSA SAFER Company Snapshot."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.in_title = False
+        self.title_parts = []
+        self.in_cell = False
+        self.cell_parts = []
+        self.row_cells = []
+        self.rows = []
+        self.current_cell = None
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag == "title":
+            self.in_title = True
+        elif tag == "tr":
+            self.row_cells = []
+        elif tag in ("td", "th"):
+            self.in_cell = True
+            self.cell_parts = []
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag == "title":
+            self.in_title = False
+        elif tag in ("td", "th") and self.in_cell:
+            value = " ".join("".join(self.cell_parts).split())
+            self.row_cells.append(value)
+            self.in_cell = False
+        elif tag == "tr" and self.row_cells:
+            cells = [x for x in self.row_cells if x]
+            if cells:
+                self.rows.append(cells)
+
+    def handle_data(self, data):
+        if self.in_title:
+            self.title_parts.append(data)
+        if self.in_cell:
+            self.cell_parts.append(data)
+
+
+def _safer_snapshot(mc_number: str) -> dict[str, Any]:
+    params = urlencode({
+        "query_param": "MC_MX",
+        "query_string": mc_number,
+        "query_type": "queryCarrierSnapshot",
+        "searchtype": "ANY",
+    })
+    url = "https://safer.fmcsa.dot.gov/query.asp?" + params
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "text/html,application/xhtml+xml",
+            "User-Agent": "Mozilla/5.0 (compatible; CargoSyncDispatch/1.0; carrier verification)",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            page = resp.read(3_000_000).decode("utf-8", errors="replace")
+            final_url = resp.geturl()
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Official FMCSA SAFER site returned HTTP {exc.code}.")
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail="Could not reach the official FMCSA SAFER site. Try again later.")
+
+    parser = _SaferHTMLParser()
+    parser.feed(page)
+    title = " ".join("".join(parser.title_parts).split())
+    text_content = " ".join(" ".join(cell for row in parser.rows for cell in row).split())
+    page_lower = page.lower()
+    no_record = (
+        "no records matching" in page_lower
+        or "no match was found" in page_lower
+        or "no carrier" in page_lower and "found" in page_lower
+    )
+    if no_record:
+        raise HTTPException(status_code=404, detail="No matching carrier was found in the official FMCSA SAFER database.")
+    if not parser.rows and not text_content:
+        raise HTTPException(status_code=502, detail="FMCSA SAFER returned an unreadable page.")
+
+    fields: dict[str, str] = {}
+    for cells in parser.rows:
+        if len(cells) >= 2:
+            key = cells[0].strip().rstrip(":")
+            value = " | ".join(c.strip() for c in cells[1:] if c.strip())
+            if key and value and len(key) < 140:
+                fields[key] = value
+
+    flat = " ".join(f"{k} {v}" for k, v in fields.items())
+    def find_field(*needles):
+        for key, value in fields.items():
+            if any(n.lower() in key.lower() for n in needles):
+                return value
+        return ""
+
+    dot_match = __import__("re").search(r"(?:USDOT|US DOT|DOT)\s*(?:Number)?\s*[:#]?\s*(\d{3,})", flat, __import__("re").I)
+    dot_number = dot_match.group(1) if dot_match else ""
+    legal_name = find_field("Legal Name", "Entity Name", "Company Name")
+    if not legal_name and title and "safer" not in title.lower():
+        legal_name = title
+    status = find_field("Operating Status", "Operation Status")
+    if not status:
+        status = find_field("Out of Service Date")
+    return {
+        "carrier": {
+            "legalName": legal_name,
+            "dotNumber": dot_number,
+            "docketNumber": mc_number,
+            "status": status,
+        },
+        "records": {
+            "saferSnapshot": fields or {"Snapshot": text_content[:12000]},
+        },
+        "queriedAt": datetime.now(timezone.utc).isoformat(),
+        "source": "Official FMCSA SAFER Company Snapshot (public, no WebKey)",
+        "sourceUrl": final_url,
+        "pageTitle": title,
+    }
+
+
+@app.get("/api/fmcsa/status")
+def fmcsa_status(user: sqlite3.Row = Depends(get_current_user)):
+    """Check reachability of the public FMCSA SAFER snapshot without API credentials."""
+    return {
+        "configured": True,
+        "provider": "FMCSA SAFER public Company Snapshot",
+        "authenticationRequired": False,
+        "lookupEndpoint": "/api/fmcsa/mc/{mc_number}",
+        "status": "ready",
+    }
+
+
 @app.get("/api/fmcsa/mc/{mc_number}")
 def fmcsa_mc_lookup(mc_number: str, user: sqlite3.Row = Depends(get_current_user)):
-    """Look up an MC/MX docket number using the official FMCSA QCMobile API."""
+    """Look up an MC/MX docket number through the public official FMCSA SAFER website."""
     import re
-    from datetime import datetime, timezone
-
     docket = re.sub(r"[^0-9]", "", mc_number or "")
     if not docket or len(docket) > 10:
         raise HTTPException(status_code=400, detail="Enter a valid numeric MC/MX number.")
-    web_key = os.getenv("FMCSA_WEBKEY", "").strip()
-    if not web_key:
-        raise HTTPException(status_code=503, detail="FMCSA_WEBKEY is not configured on the CargoSync server. Add a free FMCSA QCMobile WebKey to the local server environment.")
-    
-    def get_json(path: str):
-        url = "https://mobile.fmcsa.dot.gov/qc/services/" + path.lstrip("/") + "?" + urlencode({"webKey": web_key})
-        req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "CargoSync-MC-Checker/1.0"})
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                payload = resp.read(2_000_000).decode("utf-8", errors="replace")
-            return json.loads(payload)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                raise HTTPException(status_code=404, detail="No FMCSA record was found for this MC/MX number.")
-            if exc.code in (401, 403):
-                raise HTTPException(status_code=502, detail="FMCSA rejected the WebKey. Check FMCSA_WEBKEY configuration.")
-            raise HTTPException(status_code=502, detail=f"FMCSA API returned HTTP {exc.code}.")
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise HTTPException(status_code=502, detail="Could not reach the FMCSA API. Please try again later.")
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=502, detail="FMCSA returned a non-JSON response.")
-
-    docket_data = get_json(f"carriers/docket-number/{docket}")
-    def find_dot(value):
-        if isinstance(value, dict):
-            for key in ("dotNumber", "dot_number", "usdotNumber", "USDOTNumber"):
-                candidate = value.get(key)
-                if candidate is not None and str(candidate).isdigit():
-                    return str(candidate)
-            for child in value.values():
-                found = find_dot(child)
-                if found: return found
-        elif isinstance(value, list):
-            for child in value:
-                found = find_dot(child)
-                if found: return found
-        return None
-    dot = find_dot(docket_data)
-    if not dot:
-        raise HTTPException(status_code=404, detail="FMCSA did not return a USDOT match for this MC/MX number.")
-    records = {"docketLookup": docket_data}
-    for name, endpoint in (
-        ("basics", f"carriers/{dot}/basics"),
-        ("authority", f"carriers/{dot}/authority"),
-        ("insurance", f"carriers/{dot}/insurance"),
-        ("docketNumbers", f"carriers/{dot}/docket-numbers"),
-    ):
-        try:
-            records[name] = get_json(endpoint)
-        except HTTPException as exc:
-            # Keep the usable sections if one optional endpoint is unavailable.
-            records[name] = {"unavailable": exc.detail}
-    def find_carrier(value):
-        if isinstance(value, dict):
-            if any(k in value for k in ("legalName", "dotNumber", "dbaName", "carrierOperation")):
-                return value
-            for child in value.values():
-                found = find_carrier(child)
-                if found: return found
-        elif isinstance(value, list):
-            for child in value:
-                found = find_carrier(child)
-                if found: return found
-        return {}
-    carrier = find_carrier(records.get("basics", {})) or find_carrier(docket_data)
-    return {"carrier": carrier, "records": records, "queriedAt": datetime.now(timezone.utc).isoformat(), "source": "FMCSA QCMobile API"}
-
+    return _safer_snapshot(docket)
 
 
 @app.get("/health")
